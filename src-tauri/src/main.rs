@@ -8,7 +8,7 @@ fn main() {
             return;
         }
     }
-    lineage2_editor_lib::run()
+    l2_editor_lib::run()
 }
 
 #[cfg(all(windows, not(debug_assertions)))]

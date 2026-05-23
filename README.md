@@ -1,6 +1,6 @@
-# Lineage II Editor
+# L2 Editor
 
-A desktop editor for Lineage II server and client data. Built with Tauri, Rust, and React.
+A desktop editor for Lineage 2 server and client data. Built with Tauri, Rust, and React.
 
 > Early development. Expect rough edges and breaking changes.
 
@@ -62,8 +62,8 @@ Contributions are welcome. A few notes to keep things smooth:
 To get up and running for development:
 
 ```bash
-git clone https://github.com/<your-fork>/lineage2_editor.git
-cd lineage2_editor
+git clone https://github.com/<your-fork>/l2_editor.git
+cd l2_editor
 pnpm install
 pnpm tauri dev
 ```

@@ -1974,6 +1974,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "l2_editor"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "dat_engine",
+ "encoding_rs",
+ "flate2",
+ "image",
+ "quick-xml 0.36.2",
+ "rayon",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "texture2ddecoder",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2061,29 +2084,6 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
-]
-
-[[package]]
-name = "lineage2_editor"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "dat_engine",
- "encoding_rs",
- "flate2",
- "image",
- "quick-xml 0.36.2",
- "rayon",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "texture2ddecoder",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

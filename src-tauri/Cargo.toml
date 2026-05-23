@@ -1,12 +1,12 @@
 [package]
-name = "lineage2_editor"
+name = "l2_editor"
 version = "0.1.0"
-description = "XML editor"
+description = "Editor for Lineage 2 client and server data"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "lineage2_editor_lib"
+name = "l2_editor_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
