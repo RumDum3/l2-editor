@@ -104,7 +104,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
     return (
         <div className="text-center">
             <div className="mono select-none text-[22px] font-bold tracking-[0.55em] text-[var(--color-accent)]">
-                XMLEDITOR
+                L2 EDITOR
             </div>
             <p className="mx-auto mt-5 max-w-sm text-[13px] leading-relaxed text-[var(--color-text-faint)]">
                 Edit a skill once — your change syncs to the L2J server's XML <em>and</em> to the L2 client's{" "}

@@ -1,22 +1,11 @@
 import "leaflet/dist/leaflet.css";
-import { canvas, CRS, divIcon, type LatLngBoundsExpression, type LeafletMouseEvent, type PathOptions } from "leaflet";
+import { CRS, type LatLngBoundsExpression, type LeafletMouseEvent, type PathOptions } from "leaflet";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-    CircleMarker,
-    ImageOverlay,
-    MapContainer,
-    Marker,
-    Polygon,
-    Rectangle,
-    Tooltip,
-    useMap,
-    useMapEvents
-} from "react-leaflet";
+import { ImageOverlay, MapContainer, Polygon, Rectangle, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { listTextures, loadTexture, subscribeTexture, type TextureEntry } from "../../lib/textureCache";
 import { setJsonPref, setStringSet, toggleStringSetMember, useJsonPref, useStringSet } from "../../lib/uiPrefs";
 import { mapToWorld, REGION_SIZE, regionOf, WORLD, WORLD_H, WORLD_W, worldToMap } from "../../lib/worldCoords";
 import { type HuntingZone, huntingZonesInRegion, loadHuntingZones } from "../../lib/huntingZones";
-import { ipc } from "../../lib/ipc";
 import {
     bossesInRegion,
     EMPTY_SPAWN_INDEX,
@@ -27,16 +16,12 @@ import {
 import { loadZones, type Zone, zoneColor, zonesInRegion, zoneTypeInfo } from "../../lib/zones";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
+import { EditActions } from "../EditActions";
 
 const RADAR_PACKAGE = "L2_RadarMap";
 const TILE = 200;
 const COLS = 5;
 const LAYOUT_KEY = "worldRadarLayout";
-const EDITS_KEY = "worldPngEdits";
-const ZONES_KEY = "worldShowZones";
-const SPAWNS_KEY = "worldShowSpawns";
-const HUNTING_KEY = "worldShowHunting";
-const EDIT_KEY = "worldEditMode";
 const ZONE_TYPES_KEY = "worldZoneTypes";
 const ZONE_PANEL_KEY = "worldZonePanelCollapsed";
 
@@ -49,19 +34,6 @@ type Pos = { x: number; y: number };
 type Layout = Record<string, Pos>;
 type RGB = [number, number, number];
 const EMPTY_LAYOUT: Layout = {};
-
-type EditSel =
-    | { kind: "spawn"; idx: number }
-    | { kind: "boss"; idx: number }
-    | { kind: "hunt"; idx: number }
-    | { kind: "zone"; idx: number };
-
-interface EditDirty {
-    spawns: Map<number, { x: number; y: number }>;
-    bosses: Map<number, { x: number; y: number }>;
-    hunts: Map<number, [number, number, number]>;
-    zones: Map<number, Array<[number, number]>>;
-}
 
 export function WorldWorkspace({ active }: { active: boolean }) {
     const { config } = useSettings();
@@ -94,10 +66,6 @@ export function WorldWorkspace({ active }: { active: boolean }) {
 function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clientRoot: string; dataRoot: string }) {
     const [tiles, setTiles] = useState<string[]>([]);
     const saved = useJsonPref<Layout>(LAYOUT_KEY, EMPTY_LAYOUT);
-    const pngEdits = useJsonPref<boolean>(EDITS_KEY, true);
-    const showZones = useJsonPref<boolean>(ZONES_KEY, false);
-    const showSpawns = useJsonPref<boolean>(SPAWNS_KEY, false);
-    const showHunting = useJsonPref<boolean>(HUNTING_KEY, false);
     const oceanColor = useOceanColor(clientRoot);
 
     const [zones, setZones] = useState<Zone[]>([]);
@@ -132,102 +100,6 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
 
     const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null);
 
-    const editMode = useJsonPref<boolean>(EDIT_KEY, false);
-    const [editSel, setEditSel] = useState<EditSel | null>(null);
-    const [dirty, setDirty] = useState<EditDirty>(() => ({
-        spawns: new Map(),
-        bosses: new Map(),
-        hunts: new Map(),
-        zones: new Map()
-    }));
-
-    useEffect(() => {
-        if (!editMode) setEditSel(null);
-    }, [editMode]);
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") setEditSel(null);
-        };
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, []);
-
-    const dirtyCount = dirty.spawns.size + dirty.bosses.size + dirty.hunts.size + dirty.zones.size;
-
-    const onMoveSpawn = useCallback(
-        (i: number, p: { x: number; y: number }) => setDirty((d) => ({ ...d, spawns: new Map(d.spawns).set(i, p) })),
-        []
-    );
-    const onMoveBoss = useCallback(
-        (i: number, p: { x: number; y: number }) => setDirty((d) => ({ ...d, bosses: new Map(d.bosses).set(i, p) })),
-        []
-    );
-    const onMoveHunt = useCallback(
-        (i: number, p: [number, number, number]) => setDirty((d) => ({ ...d, hunts: new Map(d.hunts).set(i, p) })),
-        []
-    );
-    const onMoveZoneVertex = useCallback(
-        (i: number, vi: number, p: [number, number], currentPoints: Array<[number, number]>) =>
-            setDirty((d) => {
-                const updated: Array<[number, number]> = currentPoints.map((pt, k) => (k === vi ? p : pt));
-                return { ...d, zones: new Map(d.zones).set(i, updated) };
-            }),
-        []
-    );
-    const discardEdits = useCallback(() => {
-        if (dirtyCount === 0) return;
-        if (!window.confirm(`Discard ${dirtyCount} pending edit${dirtyCount === 1 ? "" : "s"}?`)) return;
-        setDirty({ spawns: new Map(), bosses: new Map(), hunts: new Map(), zones: new Map() });
-        setEditSel(null);
-    }, [dirtyCount]);
-
-    const [saving, setSaving] = useState(false);
-    const saveEdits = useCallback(async () => {
-        if (dirtyCount === 0) return;
-        setSaving(true);
-        const report: string[] = [];
-        try {
-            if (dirty.hunts.size > 0) {
-                const summary = await ipc.readGenericDatSummary("hunting_zone");
-                if (!summary) {
-                    report.push(
-                        "hunting: source dat not loaded (open the Tier-2 editor and import hunting_zone first)"
-                    );
-                } else {
-                    let saved = 0;
-                    for (const [idx, [x, y, z]] of dirty.hunts) {
-                        const h_ = huntingZones[idx];
-                        if (!h_) continue;
-                        await ipc.applyGenericDatEdits(
-                            "hunting_zone",
-                            { id: h_.id },
-                            { start_npc_x: Math.round(x), start_npc_y: Math.round(y), start_npc_z: Math.round(z) }
-                        );
-                        saved += 1;
-                    }
-                    await ipc.saveGenericDat("hunting_zone", summary.source);
-                    report.push(`hunting: saved ${saved} edit${saved === 1 ? "" : "s"} to ${summary.source}`);
-                    setDirty((d) => ({ ...d, hunts: new Map() }));
-                    setHuntingZones(await loadHuntingZones());
-                }
-            }
-            if (dirty.zones.size > 0) {
-                report.push(
-                    `zones: ${dirty.zones.size} edit${dirty.zones.size === 1 ? "" : "s"} not yet supported (Phase 3b)`
-                );
-            }
-            if (dirty.spawns.size > 0 || dirty.bosses.size > 0) {
-                const n = dirty.spawns.size + dirty.bosses.size;
-                report.push(`spawns: ${n} edit${n === 1 ? "" : "s"} not yet supported (Phase 3c)`);
-            }
-            window.alert(report.join("\n"));
-        } catch (e) {
-            window.alert(`save failed: ${e}`);
-        } finally {
-            setSaving(false);
-        }
-    }, [dirty, dirtyCount, huntingZones]);
-
     const zoneTypes = useMemo(() => {
         const counts = new Map<string, number>();
         for (const z of zones) counts.set(z.type, (counts.get(z.type) ?? 0) + 1);
@@ -245,95 +117,41 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
         };
     }, [clientRoot]);
 
+    const [reloading, setReloading] = useState(false);
+    const reloadAll = useCallback(async () => {
+        setReloading(true);
+        try {
+            const [z, h, s] = await Promise.all([
+                dataRoot ? loadZones(dataRoot) : Promise.resolve([]),
+                loadHuntingZones(),
+                dataRoot ? loadWorldSpawns(dataRoot) : Promise.resolve(EMPTY_SPAWN_INDEX)
+            ]);
+            setZones(z);
+            setHuntingZones(h);
+            setSpawnIndex(s);
+        } finally {
+            setReloading(false);
+        }
+    }, [dataRoot]);
+
     const setToolbarSlot = useSetToolbarSlot();
     useEffect(() => {
         if (!active) return;
-        const cls =
-            "rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs hover:border-[var(--color-accent-2)]";
         setToolbarSlot(
-            <div className="flex items-center gap-2">
-                <button
-                    type="button"
-                    onClick={() => setJsonPref(ZONES_KEY, !showZones)}
-                    title="Show server zone polygons (from data/zones/)"
-                    className={cls}
-                >
-                    Zones: {showZones ? "on" : "off"}
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setJsonPref(SPAWNS_KEY, !showSpawns)}
-                    title="Show all NPC and boss spawn points"
-                    className={cls}
-                >
-                    Spawns: {showSpawns ? "on" : "off"}
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setJsonPref(HUNTING_KEY, !showHunting)}
-                    title="Show hunting-zone start points"
-                    className={cls}
-                >
-                    Hunting: {showHunting ? "on" : "off"}
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setJsonPref(EDITS_KEY, !pngEdits)}
-                    title="Toggle the black-void → ocean recolour on the affected tiles"
-                    className={cls}
-                >
-                    PNG edits: {pngEdits ? "on" : "off"}
-                </button>
-                <span className="mx-1 h-4 w-px bg-[var(--color-border)]" />
-                <button
-                    type="button"
-                    onClick={() => setJsonPref(EDIT_KEY, !editMode)}
-                    title="Drag spawns, hunting points, and zone vertices to reshape them"
-                    className={`${cls} ${editMode ? "border-[var(--color-accent-2)] text-[var(--color-text)]" : ""}`}
-                >
-                    Edit: {editMode ? "on" : "off"}
-                </button>
-                {dirtyCount > 0 && (
-                    <>
-                        <span className="font-mono text-[11px] text-[var(--color-text-faint)]">
-                            {dirtyCount} pending
-                        </span>
-                        <button
-                            type="button"
-                            onClick={saveEdits}
-                            disabled={saving}
-                            title="Write pending edits back to disk"
-                            className={`${cls} border-[var(--color-accent-2)] text-[var(--color-text)] disabled:opacity-50`}
-                        >
-                            {saving ? "Saving…" : "Save"}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={discardEdits}
-                            disabled={saving}
-                            title="Discard all unsaved edits"
-                            className={`${cls} disabled:opacity-50`}
-                        >
-                            Discard
-                        </button>
-                    </>
-                )}
-            </div>
+            <EditActions
+                onUndo={() => {}}
+                onRedo={() => {}}
+                canUndo={false}
+                canRedo={false}
+                onSave={() => {}}
+                saveDisabled
+                saveTitle="World view has no editable state yet"
+                onReload={reloadAll}
+                reloadDisabled={reloading}
+            />
         );
         return () => setToolbarSlot(null);
-    }, [
-        active,
-        setToolbarSlot,
-        pngEdits,
-        showZones,
-        showSpawns,
-        showHunting,
-        editMode,
-        dirtyCount,
-        discardEdits,
-        saveEdits,
-        saving
-    ]);
+    }, [active, setToolbarSlot, reloadAll, reloading]);
 
     const placed = useMemo(() => {
         if (tiles.length === 0) return null;
@@ -409,60 +227,12 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                         bounds={it.bounds}
                         clientRoot={clientRoot}
                         oceanColor={oceanColor}
-                        pngEdits={pngEdits}
+                        pngEdits={true}
                         onReady={handleTileReady}
                     />
                 ))}
                 <RegionGrid w={placed.w} h={placed.h} onSelect={(rx, ry) => setSelected({ rx, ry })} />
-                {showZones && (
-                    <ZoneLayer
-                        zones={zones}
-                        enabled={enabledTypes}
-                        w={placed.w}
-                        h={placed.h}
-                        editMode={editMode}
-                        editSel={editSel}
-                        dirty={dirty.zones}
-                        onSelect={(i) => setEditSel({ kind: "zone", idx: i })}
-                    />
-                )}
-                {showSpawns && (
-                    <SpawnLayer
-                        spawnIndex={spawnIndex}
-                        w={placed.w}
-                        h={placed.h}
-                        editMode={editMode}
-                        editSel={editSel}
-                        dirty={dirty}
-                        onSelect={(sel) => setEditSel(sel)}
-                    />
-                )}
-                {showHunting && (
-                    <HuntingLayer
-                        hunts={huntingZones}
-                        w={placed.w}
-                        h={placed.h}
-                        editMode={editMode}
-                        editSel={editSel}
-                        dirty={dirty.hunts}
-                        onSelect={(i) => setEditSel({ kind: "hunt", idx: i })}
-                    />
-                )}
-                {editMode && editSel && (
-                    <EditHandles
-                        sel={editSel}
-                        spawnIndex={spawnIndex}
-                        huntingZones={huntingZones}
-                        zones={zones}
-                        dirty={dirty}
-                        w={placed.w}
-                        h={placed.h}
-                        onMoveSpawn={onMoveSpawn}
-                        onMoveBoss={onMoveBoss}
-                        onMoveHunt={onMoveHunt}
-                        onMoveZoneVertex={onMoveZoneVertex}
-                    />
-                )}
+                <ZoneLayer zones={zones} enabled={enabledTypes} w={placed.w} h={placed.h} />
                 <CursorTracker w={placed.w} h={placed.h} onMove={setCursor} />
             </MapContainer>
             {cursor && (
@@ -471,7 +241,7 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                     {regionOf(cursor.x, cursor.y).ry}
                 </div>
             )}
-            {showZones && <ZonePanel types={zoneTypes} enabled={enabledTypes} />}
+            <ZonePanel types={zoneTypes} enabled={enabledTypes} />
             {selected && (
                 <TileInfoModal
                     rx={selected.rx}
@@ -602,327 +372,36 @@ function setRectStyle(e: LeafletMouseEvent, style: PathOptions) {
     (e.target as unknown as { setStyle(o: PathOptions): void }).setStyle(style);
 }
 
-function ZoneLayer({
-    zones,
-    enabled,
-    w,
-    h,
-    editMode,
-    editSel,
-    dirty,
-    onSelect
-}: {
-    zones: Zone[];
-    enabled: ReadonlySet<string>;
-    w: number;
-    h: number;
-    editMode: boolean;
-    editSel: EditSel | null;
-    dirty: Map<number, Array<[number, number]>>;
-    onSelect: (idx: number) => void;
-}) {
+function ZoneLayer({ zones, enabled, w, h }: { zones: Zone[]; enabled: ReadonlySet<string>; w: number; h: number }) {
     return (
         <>
             {zones.map((z, i) => {
                 if (!enabled.has(z.type)) return null;
-                const livePoints = dirty.get(i) ?? z.points;
                 const pts: Array<[number, number]> =
-                    livePoints.length === 2
-                        ? [
-                              livePoints[0],
-                              [livePoints[1][0], livePoints[0][1]],
-                              livePoints[1],
-                              [livePoints[0][0], livePoints[1][1]]
-                          ]
-                        : livePoints;
+                    z.points.length === 2
+                        ? [z.points[0], [z.points[1][0], z.points[0][1]], z.points[1], [z.points[0][0], z.points[1][1]]]
+                        : z.points;
                 const positions = pts.map(([x, y]) => {
                     const m = worldToMap(x, y, w, h);
                     return [m.lat, m.lng] as [number, number];
                 });
                 const col = zoneColor(z.type);
-                const isDirty = dirty.has(i);
-                const isSel = editSel?.kind === "zone" && editSel.idx === i;
                 return (
                     <Polygon
                         key={`${z.name}:${i}`}
                         positions={positions}
                         pathOptions={{
-                            color: isDirty ? "#f97316" : col,
-                            weight: isSel ? 3 : isDirty ? 2 : 1,
+                            color: col,
+                            weight: 1,
                             opacity: 0.9,
                             fillColor: col,
-                            fillOpacity: isSel ? 0.25 : 0.15
+                            fillOpacity: 0.15
                         }}
-                        eventHandlers={editMode ? { click: () => onSelect(i) } : undefined}
                     >
                         <Tooltip sticky>
                             {z.name} · {z.type}
-                            {isDirty ? " (edited)" : ""}
                         </Tooltip>
                     </Polygon>
-                );
-            })}
-        </>
-    );
-}
-
-function SpawnLayer({
-    spawnIndex,
-    w,
-    h,
-    editMode,
-    editSel,
-    dirty,
-    onSelect
-}: {
-    spawnIndex: WorldSpawnIndex;
-    w: number;
-    h: number;
-    editMode: boolean;
-    editSel: EditSel | null;
-    dirty: EditDirty;
-    onSelect: (sel: EditSel) => void;
-}) {
-    const renderer = useMemo(() => canvas({ padding: 0.5 }), []);
-    return (
-        <>
-            {spawnIndex.spawns.map((s, i) => {
-                const live = dirty.spawns.get(i) ?? { x: s.x, y: s.y };
-                const m = worldToMap(live.x, live.y, w, h);
-                const info = spawnIndex.npcs.get(s.npcId);
-                const isBoss = info?.type.includes("Boss") ?? false;
-                const fill = isBoss ? "#fbbf24" : "#7dd3fc";
-                const isDirty = dirty.spawns.has(i);
-                const isSel = editSel?.kind === "spawn" && editSel.idx === i;
-                return (
-                    <CircleMarker
-                        key={`s${i}`}
-                        center={[m.lat, m.lng]}
-                        radius={isSel ? 5 : 2}
-                        pathOptions={{
-                            renderer,
-                            color: isDirty || isSel ? "#f97316" : fill,
-                            fillColor: fill,
-                            fillOpacity: 0.9,
-                            weight: isDirty || isSel ? 2 : 0
-                        }}
-                        eventHandlers={editMode ? { click: () => onSelect({ kind: "spawn", idx: i }) } : undefined}
-                    >
-                        <Tooltip>
-                            {info?.name || `#${s.npcId}`}
-                            {info?.level ? ` Lv${info.level}` : ""}
-                            {s.count > 1 ? ` ×${s.count}` : ""}
-                            {s.respawn ? ` · ${s.respawn}` : ""}
-                            {isDirty ? " (edited)" : ""}
-                        </Tooltip>
-                    </CircleMarker>
-                );
-            })}
-            {spawnIndex.bosses.map((b, i) => {
-                const live = dirty.bosses.get(i) ?? { x: b.x, y: b.y };
-                const m = worldToMap(live.x, live.y, w, h);
-                const fill = b.type === "GrandBoss" ? "#f87171" : "#fbbf24";
-                const isDirty = dirty.bosses.has(i);
-                const isSel = editSel?.kind === "boss" && editSel.idx === i;
-                return (
-                    <CircleMarker
-                        key={`b${i}`}
-                        center={[m.lat, m.lng]}
-                        radius={isSel ? 7 : 5}
-                        pathOptions={{
-                            renderer,
-                            color: isDirty || isSel ? "#f97316" : "#ffffff",
-                            fillColor: fill,
-                            fillOpacity: 1,
-                            weight: isDirty || isSel ? 2.5 : 1.5
-                        }}
-                        eventHandlers={editMode ? { click: () => onSelect({ kind: "boss", idx: i }) } : undefined}
-                    >
-                        <Tooltip>
-                            {b.name} · {b.type} Lv{b.level}
-                            {b.respawn ? ` · respawn ${b.respawn}` : ""}
-                            {isDirty ? " (edited)" : ""}
-                        </Tooltip>
-                    </CircleMarker>
-                );
-            })}
-        </>
-    );
-}
-
-const DRAG_HANDLE = divIcon({
-    className: "",
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-    html: '<div style="width:14px;height:14px;border:2px solid #f97316;background:rgba(249,115,22,0.35);border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,0.5);cursor:grab"></div>'
-});
-
-const VERTEX_HANDLE = divIcon({
-    className: "",
-    iconSize: [10, 10],
-    iconAnchor: [5, 5],
-    html: '<div style="width:8px;height:8px;border:1.5px solid #f97316;background:#fff;border-radius:50%;cursor:grab"></div>'
-});
-
-function EditHandles({
-    sel,
-    spawnIndex,
-    huntingZones,
-    zones,
-    dirty,
-    w,
-    h,
-    onMoveSpawn,
-    onMoveBoss,
-    onMoveHunt,
-    onMoveZoneVertex
-}: {
-    sel: EditSel;
-    spawnIndex: WorldSpawnIndex;
-    huntingZones: HuntingZone[];
-    zones: Zone[];
-    dirty: EditDirty;
-    w: number;
-    h: number;
-    onMoveSpawn: (i: number, p: { x: number; y: number }) => void;
-    onMoveBoss: (i: number, p: { x: number; y: number }) => void;
-    onMoveHunt: (i: number, p: [number, number, number]) => void;
-    onMoveZoneVertex: (i: number, vi: number, p: [number, number], currentPoints: Array<[number, number]>) => void;
-}) {
-    if (sel.kind === "spawn") {
-        const s = spawnIndex.spawns[sel.idx];
-        if (!s) return null;
-        const live = dirty.spawns.get(sel.idx) ?? { x: s.x, y: s.y };
-        const m = worldToMap(live.x, live.y, w, h);
-        return (
-            <Marker
-                position={[m.lat, m.lng]}
-                draggable
-                icon={DRAG_HANDLE}
-                eventHandlers={{
-                    dragend: (e) => {
-                        const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
-                        const wp = mapToWorld(ll.lat, ll.lng, w, h);
-                        onMoveSpawn(sel.idx, wp);
-                    }
-                }}
-            />
-        );
-    }
-    if (sel.kind === "boss") {
-        const b = spawnIndex.bosses[sel.idx];
-        if (!b) return null;
-        const live = dirty.bosses.get(sel.idx) ?? { x: b.x, y: b.y };
-        const m = worldToMap(live.x, live.y, w, h);
-        return (
-            <Marker
-                position={[m.lat, m.lng]}
-                draggable
-                icon={DRAG_HANDLE}
-                eventHandlers={{
-                    dragend: (e) => {
-                        const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
-                        const wp = mapToWorld(ll.lat, ll.lng, w, h);
-                        onMoveBoss(sel.idx, wp);
-                    }
-                }}
-            />
-        );
-    }
-    if (sel.kind === "hunt") {
-        const h_ = huntingZones[sel.idx];
-        if (!h_) return null;
-        const live = dirty.hunts.get(sel.idx) ?? h_.start;
-        const m = worldToMap(live[0], live[1], w, h);
-        return (
-            <Marker
-                position={[m.lat, m.lng]}
-                draggable
-                icon={DRAG_HANDLE}
-                eventHandlers={{
-                    dragend: (e) => {
-                        const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
-                        const wp = mapToWorld(ll.lat, ll.lng, w, h);
-                        onMoveHunt(sel.idx, [wp.x, wp.y, live[2]]);
-                    }
-                }}
-            />
-        );
-    }
-    if (sel.kind === "zone") {
-        const z = zones[sel.idx];
-        if (!z) return null;
-        const livePoints = dirty.zones.get(sel.idx) ?? z.points;
-        return (
-            <>
-                {livePoints.map(([x, y], vi) => {
-                    const m = worldToMap(x, y, w, h);
-                    return (
-                        <Marker
-                            key={vi}
-                            position={[m.lat, m.lng]}
-                            draggable
-                            icon={VERTEX_HANDLE}
-                            eventHandlers={{
-                                dragend: (e) => {
-                                    const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
-                                    const wp = mapToWorld(ll.lat, ll.lng, w, h);
-                                    onMoveZoneVertex(sel.idx, vi, [wp.x, wp.y], livePoints);
-                                }
-                            }}
-                        />
-                    );
-                })}
-            </>
-        );
-    }
-    return null;
-}
-
-function HuntingLayer({
-    hunts,
-    w,
-    h,
-    editMode,
-    editSel,
-    dirty,
-    onSelect
-}: {
-    hunts: HuntingZone[];
-    w: number;
-    h: number;
-    editMode: boolean;
-    editSel: EditSel | null;
-    dirty: Map<number, [number, number, number]>;
-    onSelect: (idx: number) => void;
-}) {
-    const renderer = useMemo(() => canvas({ padding: 0.5 }), []);
-    return (
-        <>
-            {hunts.map((h_, i) => {
-                const live = dirty.get(i) ?? h_.start;
-                const m = worldToMap(live[0], live[1], w, h);
-                const isDirty = dirty.has(i);
-                const isSel = editSel?.kind === "hunt" && editSel.idx === i;
-                return (
-                    <CircleMarker
-                        key={`h${i}`}
-                        center={[m.lat, m.lng]}
-                        radius={isSel ? 6 : 4}
-                        pathOptions={{
-                            renderer,
-                            color: isDirty || isSel ? "#f97316" : "#a78bfa",
-                            fillColor: "#a78bfa",
-                            fillOpacity: 0.55,
-                            weight: isDirty || isSel ? 3 : 2
-                        }}
-                        eventHandlers={editMode ? { click: () => onSelect(i) } : undefined}
-                    >
-                        <Tooltip>
-                            {h_.name || `#${h_.id}`} · Lv {h_.levelMin}–{h_.levelMax}
-                            {isDirty ? " (edited)" : ""}
-                        </Tooltip>
-                    </CircleMarker>
                 );
             })}
         </>

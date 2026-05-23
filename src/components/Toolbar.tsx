@@ -233,6 +233,8 @@ export function Toolbar({
                             : `Write XML${pendingCount > 0 ? ` + flush ${pendingCount} client skill${pendingCount === 1 ? "" : "s"} to ${clientTargets.join(" + ")}` : ""}`
                     }
                     onSave={onSave}
+                    onReload={refreshFolder}
+                    reloadDisabled={!loaded}
                 />
                 {logsBtn}
                 {settingsBtn}
