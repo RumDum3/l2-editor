@@ -75,3 +75,5 @@ Found a bug or want a feature? Open an issue with reproduction steps or a clear 
 Released under the **[GNU General Public License v3.0](./LICENSE)**.
 
 This choice reflects the project's heritage: `dat_engine` is a Rust port of work originally published by the [MobiusDevelopment](https://github.com/MobiusDevelopment/l2clientdat) team, and the wider L2J / L2J Mobius server ecosystem also distributes under GPL-3.0. Contributing means agreeing that your contribution is offered under GPL-3.0.
+
+> Contact `ilikebeer.` (713057197474578474) on discord for more support
