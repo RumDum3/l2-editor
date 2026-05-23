@@ -4,6 +4,8 @@ A desktop editor for Lineage 2 server and client data. Built with Tauri, Rust, a
 
 > Early development. Expect rough edges and breaking changes.
 
+> **Back up your client and server files before using this app.** L2 Editor writes back to your `.dat` and `.xml` files in place. While it tries to be careful (atomic writes, `.bak` files alongside saved dats), bugs happen and partial writes can corrupt assets. **Keep a known-good copy of your `system/` and `data/` folders somewhere safe before you point the editor at them.**
+
 ## What it does
 
 - **World view.** Browse the radar map, see server zones, NPC spawns, and hunting areas overlaid in their actual world positions.
