@@ -15,14 +15,14 @@ A desktop editor for Lineage II server and client data. Built with Tauri, Rust, 
 
 ## Compatibility
 
-Tested against a single client + server pair so far. Other chronicles and forks will likely need schema or cipher adjustments before they parse cleanly.
+Tested against a single client + server pair so far. Other chronicles and forks will likely need minor adjustments before they parse cleanly.
 
 | | Tested | Status |
 |---|---|---|
 | **Client** | Superion, protocol revision **502** | Working |
 | **Server pack** | L2J Mobius **Superion** | Working |
 
-If you try a different chronicle or server pack and want it supported, open an issue with a sample dat and the protocol revision and we can take a look.
+If you try a different chronicle or server pack and want it supported, open an issue with a sample dat and the protocol revision.
 
 ## Stack
 
@@ -46,7 +46,7 @@ Point the app at your L2 client and server data folders in Settings. Open the **
 
 Built on top of years of community reverse-engineering. Special thanks to:
 
-- **[MobiusDevelopment/l2clientdat](https://github.com/MobiusDevelopment/l2clientdat)** for the original C# reference implementation of the Lineage 2 client dat ciphers and schema definitions. The Rust port in `dat_engine` is a direct descendant of that work.
+- **[MobiusDevelopment/l2clientdat](https://github.com/MobiusDevelopment/l2clientdat)** for the original reference implementation of the Lineage 2 client dat ciphers and schema definitions. The Rust port in `dat_engine` is a direct descendant of that work.
 - The wider L2J / L2J Mobius community for the server-side data formats this editor operates on.
 
 ## Contributing
