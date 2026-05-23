@@ -11,6 +11,8 @@ yarn-error.log
 dist/
 dist-ssr/
 build/
+release-portable/
+tauri-build.log
 *.local
 
 # Rust / Cargo
