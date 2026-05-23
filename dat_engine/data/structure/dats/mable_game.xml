@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+    <file pattern="Homunculus" isSafePackage="true">
+        <node name="data" reader="UINT" />
+        <for name="cell_info" size="#data" hidden="false">
+            <node name="cell_id" reader="UINT" />
+            <node name="cell_color" reader="UBYTE" />
+            <node name="cell_name" reader="ASCF" />
+            <node name="cell_reward" reader="CNTR" />
+            <for name="cell_reward" size="#cell_reward">
+                <node name="cell_reward_param_1" reader="UINT" />
+                <node name="cell_reward_param_2" reader="UINT" />
+            </for>
+            <node name="event_group_Id" reader="CNTR" />
+            <for name="event_group_Id" size="#event_group_Id">
+                <node name="event_group_Id_param" reader="UINT" />
+            </for>
+        </for>
+    </file>
+	<file pattern="OrcVillage" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="mable_game" size="#data" hidden="false">
+			<node name="cell_id" reader="UINT" />
+			<node name="cell_color" reader="UBYTE" />
+			<node name="cell_name_zone_id" reader="UINT" />
+			<node name="cell_reward" reader="UBYTE" />
+			<for name="cell_reward" size="#cell_reward">
+				<node name="reward_id" reader="UINT" />
+				<node name="reward_count" reader="UINT" />
+			</for>
+			<node name="event_group_Id" reader="UBYTE" />
+			<for name="event_group_Id" size="#event_group_Id">
+				<node name="event_group_Id2" reader="UINT" />
+			</for>
+		</for>
+	</file>
+</list>

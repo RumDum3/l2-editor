@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>XML editor</title>
+        <style>
+            html, body, #root { height: 100%; margin: 0; }
+            body {
+                background: #0a0b0f;
+                color: #e6e7ea;
+                font-family: ui-sans-serif, system-ui, sans-serif;
+            }
+            #boot-splash {
+                position: fixed; inset: 0;
+                display: flex; flex-direction: column;
+                align-items: center; justify-content: center;
+                gap: 18px;
+                background: #0a0b0f;
+                z-index: 9999;
+            }
+            #boot-splash .wordmark {
+                font-size: 32px; font-weight: 600; letter-spacing: 0.18em;
+                animation: bootFade 0.8s ease-out;
+            }
+            #boot-splash .wordmark .accent { color: #d4b85e; }
+            #boot-splash .bar {
+                width: 160px; height: 2px; overflow: hidden;
+                background: rgba(212, 184, 94, 0.15); border-radius: 2px;
+            }
+            #boot-splash .bar::after {
+                content: ""; display: block; width: 40%; height: 100%;
+                background: #d4b85e; border-radius: 2px;
+                animation: bootSlide 1.2s ease-in-out infinite;
+            }
+            #boot-splash .label {
+                margin-top: 8px;
+                font-size: 10px; letter-spacing: 0.25em;
+                text-transform: uppercase;
+                color: #8a8e98;
+            }
+            @keyframes bootFade { from { opacity: 0; transform: translateY(8px); } }
+            @keyframes bootSlide {
+                0% { transform: translateX(-100%); }
+                100% { transform: translateX(400%); }
+            }
+        </style>
+    </head>
+    <body>
+        <div id="root"></div>
+        <div id="boot-splash" aria-hidden="true">
+            <div class="wordmark">XML<span class="accent">EDITOR</span></div>
+            <div class="bar"></div>
+            <div class="label">loading</div>
+        </div>
+        <script>
+            window.__bootStart = performance.now();
+        </script>
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
+</html>

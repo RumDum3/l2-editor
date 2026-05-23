@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<file pattern="PreludeOfWar" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="dyeeffect" size="#data" hidden="false">
+			<node name="class_id" reader="UINT" />
+			<node name="slot_id" reader="UINT" />
+			<node name="skill_id" reader="UINT" />
+		</for>
+	</file>
+	<file pattern="Superion" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="dyeeffect" size="#data" hidden="false">
+			<node name="category" reader="UBYTE" />
+			<node name="slot_id" reader="UBYTE" />
+			<write name="\r\n" />
+			<node name="slots_level" reader="CNTR" />
+			<for name="slots_level" size="#slots_level" hidden="false">"
+				<node name="unk1" reader="UBYTE" />
+				<node name="hidden_slot_level" reader="USHORT" />
+				<node name="slot_level" reader="UBYTE" />
+				<node name="skill_id" reader="UINT" />
+				<node name="skill_level" reader="USHORT" />
+				<node name="enchant_fee_id" reader="UINT" />
+				<node name="enchant_fee_count" reader="UINT" />
+				<node name="reset_fee_id" reader="UINT" />
+				<node name="reset_fee_count" reader="LONG" />
+				<node name="unk2" reader="UINT" />
+				<node name="hidden_skill_enchant_fee_id" reader="UINT" />
+				<node name="hidden_skill_enchant_fee_count" reader="UINT" />
+				<node name="hidden_skill_id" reader="USHORT" />
+				<node name="unk3" reader="UBYTE" />
+			</for>
+			<node name="unk4" reader="UBYTE" />
+			<node name="unk5" reader="UBYTE" />
+			<node name="unk6" reader="UBYTE" />
+		</for>
+	</file>
+</list>

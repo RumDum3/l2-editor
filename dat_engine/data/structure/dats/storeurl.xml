@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<file pattern="Superion" isSafePackage="true">
+		<node name="data" reader="CNTR" />
+		<for name="store_url" size="#data" hidden="false">
+			<node name="img" reader="ASCF" />
+			<node name="url" reader="ASCF" />
+			<node name="unk" reader="UBYTE" />
+			<for name="unk" size="#unk" hidden="true">
+				<node name="unk1" reader="UINT" />
+			</for>
+		</for>
+	</file>
+</list>

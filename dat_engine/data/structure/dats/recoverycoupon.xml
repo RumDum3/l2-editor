@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<file pattern="Superion" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="recoverycoupon_exeffect" size="#data" hidden="false">
+			<node name="item_id" reader="UINT" />
+			<node name="categories" reader="CNTR" />
+			<for name="categories" size="#categories" hidden="true">
+				<node name="category" reader="UBYTE" />
+				<node name="sysstring_id" reader="USHORT" />
+			</for>
+			<node name="title_sysstring_id" reader="USHORT" />
+			<node name="default_multisellId" reader="UINT" />
+			<node name="extra_multisell_id" reader="UINT" />
+			<node name="extra_multisell_servers" reader="CNTR" />
+			<for name="extra_multisell_servers" size="#extra_multisell_servers" hidden="true">
+				<node name="server_id" reader="UINT" />
+			</for>
+		</for>
+	</file>
+</list>

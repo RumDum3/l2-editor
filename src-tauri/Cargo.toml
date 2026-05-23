@@ -1,0 +1,42 @@
+[package]
+name = "lineage2_editor"
+version = "0.1.0"
+description = "XML editor"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "lineage2_editor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+dat_engine = { path = "../dat_engine" }
+
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+quick-xml = { workspace = true }
+encoding_rs = { workspace = true }
+flate2 = { workspace = true }
+
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+byteorder = "1"
+texture2ddecoder = "0.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+rayon = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
+regex = { workspace = true }

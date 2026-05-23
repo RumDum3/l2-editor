@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<file pattern="OrcVillage" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="changeclass" size="#data" hidden="false">
+			<node name="class_id" reader="UINT" enum_name="class" />
+			<node name="unk1" reader="UBYTE" />
+			<node name="unk2" reader="UBYTE" />
+			<node name="unk3" reader="UBYTE" />
+			<node name="unk4" reader="UBYTE" />
+			<node name="unk5" reader="UBYTE" />
+			<node name="unk6" reader="UBYTE" />
+			<node name="unk7" reader="UBYTE" />
+			<node name="unk8" reader="UBYTE" />
+			<node name="race" reader="UBYTE" enum_name="race" />
+			<node name="sex" reader="UBYTE" enum_name="sex" />
+			<node name="unk10" reader="UBYTE" />
+			<node name="unk11" reader="UBYTE" />
+			<node name="unk12" reader="UBYTE" />
+			<node name="male_texture_name" reader="ASCF" />
+			<node name="unk13" reader="UBYTE" />
+			<node name="female_texture_name" reader="ASCF" />
+		</for>
+	</file>
+</list>

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<file pattern="Homunculus2" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="pet_acquire_skill" size="#data" hidden="false">
+			<node name="pet_id" reader="UINT" />
+			<write name="\r\n" />
+			<node name="skillsSize" reader="CNTR" />
+			<for name="skill" size="#skillsSize" hidden="false">
+				<node name="get_evolve_step" reader="UINT" />
+				<node name="get_lv" reader="UINT" />
+				<node name="skill_id" reader="UINT" />
+				<node name="skill_level" reader="UINT" />
+				<node name="item_needed" reader="CNTR" />
+				<for name="item_needed" size="#item_needed">
+					<node name="item_needed_id" reader="UINT" />
+					<node name="item_needed_count" reader="UINT" />
+				</for>
+			</for>
+		</for>
+	</file>
+	<file pattern="ShieldOfKingdom" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="pet_acquire_skill" size="#data" hidden="false">
+			<node name="pet_id" reader="UINT" />
+			<write name="\r\n" />
+			<node name="acquire_skills" reader="CNTR" />
+			<for name="acquire_skills" size="#acquire_skills">
+				<node name="get_evolve_step" reader="UINT" />
+				<node name="get_lv" reader="UINT" />
+				<node name="skill_id" reader="UINT" />
+				<node name="skill_level" reader="SHORT" />
+				<node name="skill_sublevel" reader="SHORT" />
+				<node name="item_needed" reader="CNTR" />
+				<for name="item_needed" size="#item_needed">
+					<node name="item_needed_id" reader="UINT" />
+					<node name="item_needed_count" reader="UINT" />
+				</for>
+				<node name="prioritized_items" reader="CNTR" />
+				<for name="prioritized_items" size="#prioritized_items">
+					<node name="prioritized_item_id" reader="UINT" />
+					<node name="prioritized_item_count" reader="UINT" />
+				</for>
+			</for>
+		</for>
+	</file>
+	<file pattern="Superion" isSafePackage="true">
+		<node name="data" reader="UINT" />
+		<for name="pet_acquire_skill" size="#data" hidden="false">
+			<node name="pet_id" reader="UINT" />
+			<write name="\r\n" />
+			<node name="acquire_skills" reader="UINT" />
+			<for name="acquire_skills" size="#acquire_skills">
+				<node name="skill_id1" reader="UINT" />
+				<node name="skill_id2" reader="UINT" />
+				<node name="skill_minlevel" reader="UINT" />
+				<node name="skill_maxlevel" reader="UINT" />
+				<node name="levels" reader="CNTR" />
+				<for name="levels" size="#levels">
+					<node name="skill_level" reader="SHORT" />
+					<node name="skill_sublevel" reader="SHORT" />
+					<node name="get_evolve_step" reader="UINT" />
+					<node name="get_lv" reader="UINT" />
+					<node name="item_needed" reader="CNTR" />
+					<for name="item_needed" size="#item_needed">
+						<node name="item_needed_id" reader="UINT" />
+						<node name="item_needed_count" reader="UINT" />
+					</for>
+					<node name="prioritized_items" reader="CNTR" />
+					<for name="prioritized_items" size="#prioritized_items">
+						<node name="prioritized_item_id" reader="UINT" />
+						<node name="prioritized_item_count" reader="UINT" />
+					</for>
+				</for>
+			</for>
+		</for>
+	</file>
+</list>
