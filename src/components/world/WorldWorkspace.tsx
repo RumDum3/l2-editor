@@ -5,15 +5,7 @@ import { ImageOverlay, MapContainer, Polygon, Rectangle, Tooltip, useMap, useMap
 import { listTextures, loadTexture, subscribeTexture, type TextureEntry } from "../../lib/textureCache";
 import { setJsonPref, setStringSet, toggleStringSetMember, useJsonPref, useStringSet } from "../../lib/uiPrefs";
 import { mapToWorld, REGION_SIZE, regionOf, WORLD, WORLD_H, WORLD_W, worldToMap } from "../../lib/worldCoords";
-import { type HuntingZone, huntingZonesInRegion, loadHuntingZones } from "../../lib/huntingZones";
-import {
-    bossesInRegion,
-    EMPTY_SPAWN_INDEX,
-    loadWorldSpawns,
-    npcsInRegion,
-    type WorldSpawnIndex
-} from "../../lib/spawns";
-import { loadZones, type Zone, zoneColor, zonesInRegion, zoneTypeInfo } from "../../lib/zones";
+import { loadZones, type Zone, zoneColor, zoneTypeInfo } from "../../lib/zones";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
 import { EditActions } from "../EditActions";
@@ -79,25 +71,6 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
         };
     }, [dataRoot, zones.length]);
 
-    const [huntingZones, setHuntingZones] = useState<HuntingZone[]>([]);
-    useEffect(() => {
-        let cancelled = false;
-        loadHuntingZones().then((h) => !cancelled && setHuntingZones(h));
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
-    const [spawnIndex, setSpawnIndex] = useState<WorldSpawnIndex>(EMPTY_SPAWN_INDEX);
-    useEffect(() => {
-        if (!dataRoot) return;
-        let cancelled = false;
-        loadWorldSpawns(dataRoot).then((s) => !cancelled && setSpawnIndex(s));
-        return () => {
-            cancelled = true;
-        };
-    }, [dataRoot]);
-
     const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null);
 
     const zoneTypes = useMemo(() => {
@@ -119,16 +92,11 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
 
     const [reloading, setReloading] = useState(false);
     const reloadAll = useCallback(async () => {
+        if (!dataRoot) return;
         setReloading(true);
         try {
-            const [z, h, s] = await Promise.all([
-                dataRoot ? loadZones(dataRoot) : Promise.resolve([]),
-                loadHuntingZones(),
-                dataRoot ? loadWorldSpawns(dataRoot) : Promise.resolve(EMPTY_SPAWN_INDEX)
-            ]);
+            const z = await loadZones(dataRoot);
             setZones(z);
-            setHuntingZones(h);
-            setSpawnIndex(s);
         } finally {
             setReloading(false);
         }
@@ -246,9 +214,6 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                 <TileInfoModal
                     rx={selected.rx}
                     ry={selected.ry}
-                    zones={zones}
-                    huntingZones={huntingZones}
-                    spawnIndex={spawnIndex}
                     placed={placed}
                     clientRoot={clientRoot}
                     onClose={() => setSelected(null)}
@@ -639,18 +604,12 @@ interface PlacedTiles {
 function TileInfoModal({
     rx,
     ry,
-    zones,
-    huntingZones,
-    spawnIndex,
     placed,
     clientRoot,
     onClose
 }: {
     rx: number;
     ry: number;
-    zones: Zone[];
-    huntingZones: HuntingZone[];
-    spawnIndex: WorldSpawnIndex;
     placed: PlacedTiles;
     clientRoot: string;
     onClose: () => void;
@@ -663,25 +622,45 @@ function TileInfoModal({
         return () => window.removeEventListener("keydown", onKey);
     }, [onClose]);
 
-    const here = useMemo(() => zonesInRegion(zones, rx, ry), [zones, rx, ry]);
-    const hunts = useMemo(() => huntingZonesInRegion(huntingZones, rx, ry), [huntingZones, rx, ry]);
-    const npcGroups = useMemo(() => npcsInRegion(spawnIndex.spawns, spawnIndex.npcs, rx, ry), [spawnIndex, rx, ry]);
-    const bosses = useMemo(() => bossesInRegion(spawnIndex.bosses, rx, ry), [spawnIndex, rx, ry]);
-    const totalNpcSpawns = useMemo(() => npcGroups.reduce((s, g) => s + g.count, 0), [npcGroups]);
-
-    const tileName = useMemo(() => {
-        const cxWorld = (rx - 20) * REGION_SIZE + REGION_SIZE / 2;
-        const cyWorld = (ry - 18) * REGION_SIZE + REGION_SIZE / 2;
-        const center = worldToMap(cxWorld, cyWorld, placed.w, placed.h);
+    const cropInfo = useMemo(() => {
+        const x0 = (rx - 20) * REGION_SIZE;
+        const y0 = (ry - 18) * REGION_SIZE;
+        const tl = worldToMap(x0, y0, placed.w, placed.h);
+        const br = worldToMap(x0 + REGION_SIZE, y0 + REGION_SIZE, placed.w, placed.h);
+        const regionLatMin = Math.min(tl.lat, br.lat);
+        const regionLatMax = Math.max(tl.lat, br.lat);
+        const regionLngMin = Math.min(tl.lng, br.lng);
+        const regionLngMax = Math.max(tl.lng, br.lng);
+        const regionCenterLat = (regionLatMin + regionLatMax) / 2;
+        const regionCenterLng = (regionLngMin + regionLngMax) / 2;
         const tile = placed.items.find((it) => {
             const b = it.bounds as [[number, number], [number, number]];
             const latMin = Math.min(b[0][0], b[1][0]);
             const latMax = Math.max(b[0][0], b[1][0]);
             const lngMin = Math.min(b[0][1], b[1][1]);
             const lngMax = Math.max(b[0][1], b[1][1]);
-            return center.lat >= latMin && center.lat <= latMax && center.lng >= lngMin && center.lng <= lngMax;
+            return (
+                regionCenterLat >= latMin &&
+                regionCenterLat <= latMax &&
+                regionCenterLng >= lngMin &&
+                regionCenterLng <= lngMax
+            );
         });
-        return tile?.name ?? null;
+        if (!tile) return null;
+        const b = tile.bounds as [[number, number], [number, number]];
+        const tileLatMin = Math.min(b[0][0], b[1][0]);
+        const tileLatMax = Math.max(b[0][0], b[1][0]);
+        const tileLngMin = Math.min(b[0][1], b[1][1]);
+        const tileLngMax = Math.max(b[0][1], b[1][1]);
+        const tileMapW = tileLngMax - tileLngMin;
+        const tileMapH = tileLatMax - tileLatMin;
+        return {
+            name: tile.name,
+            fracX: (regionLngMax - regionLngMin) / tileMapW,
+            fracY: (regionLatMax - regionLatMin) / tileMapH,
+            offsetX: (regionLngMin - tileLngMin) / tileMapW,
+            offsetY: (tileLatMax - regionLatMax) / tileMapH
+        };
     }, [rx, ry, placed]);
 
     return (
@@ -690,15 +669,9 @@ function TileInfoModal({
                 className="flex max-h-[85vh] w-[640px] max-w-full flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
             >
-                <header className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-5 py-3">
-                    <div>
-                        <div className="font-mono text-base text-[var(--color-text)]">
-                            Region {rx}_{ry}
-                        </div>
-                        <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">
-                            {here.length} zones · {bosses.length} bosses · {npcGroups.length} NPC kinds · {hunts.length}{" "}
-                            hunting
-                        </div>
+                <header className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] px-5 py-3">
+                    <div className="font-mono text-base text-[var(--color-text)]">
+                        Region {rx}_{ry}
                     </div>
                     <button
                         type="button"
@@ -708,149 +681,69 @@ function TileInfoModal({
                         ×
                     </button>
                 </header>
-
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                    {tileName && <TileThumb name={tileName} clientRoot={clientRoot} />}
-                    <div className="flex flex-col gap-6 px-5 py-5 text-[12px] text-[var(--color-text)]">
-                        <InfoSection title="Zones" count={here.length}>
-                            {here.length === 0 ? (
-                                <EmptyLine>no zones in this region</EmptyLine>
-                            ) : (
-                                here.map((z, i) => (
-                                    <Row key={`${z.name}:${i}`}>
-                                        <span
-                                            className="inline-block h-2 w-2 shrink-0 rounded-sm"
-                                            style={{ background: zoneColor(z.type) }}
-                                        />
-                                        <span className="flex-1 truncate" title={zoneTypeInfo(z.type)}>
-                                            {z.name}
-                                        </span>
-                                        <span className="shrink-0 text-[10px] text-[var(--color-text-faint)]">
-                                            {z.type}
-                                        </span>
-                                    </Row>
-                                ))
-                            )}
-                        </InfoSection>
-
-                        <InfoSection title="Bosses" count={bosses.length}>
-                            {bosses.length === 0 ? (
-                                <EmptyLine>no bosses spawn here</EmptyLine>
-                            ) : (
-                                bosses.map((b, i) => (
-                                    <Row key={`${b.npcId}:${i}`}>
-                                        <span
-                                            className="inline-block h-2 w-2 shrink-0 rotate-45"
-                                            style={{ background: b.type === "GrandBoss" ? "#f87171" : "#fbbf24" }}
-                                        />
-                                        <span className="flex-1 truncate" title={b.type}>
-                                            {b.name}
-                                        </span>
-                                        {b.level > 0 && (
-                                            <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                                Lv {b.level}
-                                            </span>
-                                        )}
-                                        {b.respawn && (
-                                            <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                                {b.respawn}
-                                            </span>
-                                        )}
-                                    </Row>
-                                ))
-                            )}
-                        </InfoSection>
-
-                        <InfoSection
-                            title="NPCs"
-                            count={npcGroups.length}
-                            subtitle={
-                                npcGroups.length > 0
-                                    ? `${totalNpcSpawns} spawn${totalNpcSpawns === 1 ? "" : "s"}`
-                                    : undefined
-                            }
-                        >
-                            {npcGroups.length === 0 ? (
-                                <EmptyLine>no NPCs spawn here</EmptyLine>
-                            ) : (
-                                npcGroups.map((g) => (
-                                    <Row key={g.npcId}>
-                                        <span className="flex-1 truncate" title={g.type}>
-                                            {g.name}
-                                        </span>
-                                        {g.level > 0 && (
-                                            <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                                Lv {g.level}
-                                            </span>
-                                        )}
-                                        <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                            ×{g.count}
-                                        </span>
-                                    </Row>
-                                ))
-                            )}
-                        </InfoSection>
-
-                        <InfoSection title="Hunting areas" count={hunts.length}>
-                            {hunts.length === 0 ? (
-                                <EmptyLine>no hunting areas here</EmptyLine>
-                            ) : (
-                                hunts.map((h, i) => (
-                                    <Row key={`${h.id}:${i}`}>
-                                        <span className="flex-1 truncate">{h.name || `#${h.id}`}</span>
-                                        <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                            Lv {h.levelMin}–{h.levelMax}
-                                        </span>
-                                    </Row>
-                                ))
-                            )}
-                        </InfoSection>
+                {cropInfo ? (
+                    <RegionCrop
+                        tileName={cropInfo.name}
+                        clientRoot={clientRoot}
+                        fracX={cropInfo.fracX}
+                        fracY={cropInfo.fracY}
+                        offsetX={cropInfo.offsetX}
+                        offsetY={cropInfo.offsetY}
+                    />
+                ) : (
+                    <div className="flex h-[200px] items-center justify-center text-[11px] text-[var(--color-text-faint)]">
+                        no tile covers this region
                     </div>
-                </div>
+                )}
             </div>
         </div>
     );
 }
 
-function InfoSection({
-    title,
-    count,
-    subtitle,
-    children
+function RegionCrop({
+    tileName,
+    clientRoot,
+    fracX,
+    fracY,
+    offsetX,
+    offsetY
 }: {
-    title: string;
-    count: number;
-    subtitle?: string;
-    children: React.ReactNode;
+    tileName: string;
+    clientRoot: string;
+    fracX: number;
+    fracY: number;
+    offsetX: number;
+    offsetY: number;
 }) {
+    const { url, settled } = useTextureUrl(`${RADAR_PACKAGE}.${tileName}`, clientRoot);
     return (
-        <section>
-            <h3 className="mb-2 flex items-baseline gap-2">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-faint)]">{title}</span>
-                <span className="font-mono text-[11px] text-[var(--color-text)]">{count}</span>
-                {subtitle && <span className="text-[10px] text-[var(--color-text-faint)]">· {subtitle}</span>}
-            </h3>
-            <div className="flex flex-col">{children}</div>
-        </section>
-    );
-}
-
-function Row({ children }: { children: React.ReactNode }) {
-    return <div className="flex items-center gap-2 border-b border-white/5 py-1.5 last:border-b-0">{children}</div>;
-}
-
-function EmptyLine({ children }: { children: React.ReactNode }) {
-    return <div className="py-1 text-[11px] text-[var(--color-text-faint)]">{children}</div>;
-}
-
-function TileThumb({ name, clientRoot }: { name: string; clientRoot: string }) {
-    const { url, settled } = useTextureUrl(`${RADAR_PACKAGE}.${name}`, clientRoot);
-    return (
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-[var(--color-surface-2)] p-4">
             {url ? (
-                <img src={url} alt="tile" className="mx-auto block max-h-[260px] w-auto max-w-full" />
+                <div
+                    className="relative overflow-hidden border border-[var(--color-border)]"
+                    style={{
+                        aspectRatio: `${fracX} / ${fracY}`,
+                        width: "100%",
+                        maxWidth: "100%",
+                        maxHeight: "100%"
+                    }}
+                >
+                    <img
+                        src={url}
+                        alt={`region tile crop from ${tileName}`}
+                        style={{
+                            position: "absolute",
+                            top: `${(-offsetY * 100) / fracY}%`,
+                            left: `${(-offsetX * 100) / fracX}%`,
+                            width: `${100 / fracX}%`,
+                            height: `${100 / fracY}%`,
+                            maxWidth: "none",
+                            imageRendering: "pixelated"
+                        }}
+                    />
+                </div>
             ) : (
-                <div className="flex h-[200px] items-center justify-center text-[11px] text-[var(--color-text-faint)]">
+                <div className="text-[11px] text-[var(--color-text-faint)]">
                     {settled ? "tile image unavailable" : "loading tile…"}
                 </div>
             )}
