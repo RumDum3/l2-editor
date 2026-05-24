@@ -5,7 +5,8 @@ import { ImageOverlay, MapContainer, Polygon, Rectangle, Tooltip, useMap, useMap
 import { listTextures, loadTexture, subscribeTexture, type TextureEntry } from "../../lib/textureCache";
 import { setJsonPref, setStringSet, toggleStringSetMember, useJsonPref, useStringSet } from "../../lib/uiPrefs";
 import { mapToWorld, REGION_SIZE, regionOf, WORLD, WORLD_H, WORLD_W, worldToMap } from "../../lib/worldCoords";
-import { loadZones, type Zone, zoneColor, zoneTypeInfo } from "../../lib/zones";
+import { loadMinimapRegions, type MinimapSheet } from "../../lib/minimapRegions";
+import { loadZones, type Zone, zoneCentroid, zoneColor, zonesInRegion, zoneTypeInfo } from "../../lib/zones";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
 import { EditActions } from "../EditActions";
@@ -22,10 +23,12 @@ const NUMBERED = /^radarmap_(\d+)$/i;
 const FIX_NUMBERS = new Set([5, 10]);
 const OCEAN_TILE = "radarmap_20";
 
-type Pos = { x: number; y: number };
+type Pos = { x: number; y: number; w?: number; h?: number };
 type Layout = Record<string, Pos>;
 type RGB = [number, number, number];
 const EMPTY_LAYOUT: Layout = {};
+
+const MAP_TARGET_W = 1000;
 
 export function WorldWorkspace({ active }: { active: boolean }) {
     const { config } = useSettings();
@@ -72,6 +75,15 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
     }, [dataRoot, zones.length]);
 
     const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null);
+
+    const [minimap, setMinimap] = useState<MinimapSheet[] | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        loadMinimapRegions().then((m) => !cancelled && setMinimap(m));
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const zoneTypes = useMemo(() => {
         const counts = new Map<string, number>();
@@ -123,26 +135,30 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
 
     const placed = useMemo(() => {
         if (tiles.length === 0) return null;
-        const layout = gridFill(tiles, saved);
+        const layout = computeLayout(tiles, saved, minimap);
         let minX = Infinity;
         let minY = Infinity;
         let maxX = -Infinity;
         let maxY = -Infinity;
         for (const p of Object.values(layout)) {
+            const w = p.w ?? TILE;
+            const h = p.h ?? TILE;
             minX = Math.min(minX, p.x);
             minY = Math.min(minY, p.y);
-            maxX = Math.max(maxX, p.x + TILE);
-            maxY = Math.max(maxY, p.y + TILE);
+            maxX = Math.max(maxX, p.x + w);
+            maxY = Math.max(maxY, p.y + h);
         }
         const w = maxX - minX;
         const h = maxY - minY;
         const items = tiles.map((name) => {
             const p = layout[name];
+            const tw = p.w ?? TILE;
+            const th = p.h ?? TILE;
             const lng = p.x - minX;
             const top = p.y - minY;
             const bounds: LatLngBoundsExpression = [
-                [h - top - TILE, lng],
-                [h - top, lng + TILE]
+                [h - top - th, lng],
+                [h - top, lng + tw]
             ];
             return { name, bounds };
         });
@@ -151,7 +167,7 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
             [h, w]
         ];
         return { items, total, w, h };
-    }, [tiles, saved]);
+    }, [tiles, saved, minimap]);
 
     const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
 
@@ -214,6 +230,7 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                 <TileInfoModal
                     rx={selected.rx}
                     ry={selected.ry}
+                    zones={zones}
                     placed={placed}
                     clientRoot={clientRoot}
                     onClose={() => setSelected(null)}
@@ -587,10 +604,47 @@ function num(name: string): number {
     return m ? parseInt(m[1], 10) : 0;
 }
 
-function gridFill(tiles: string[], saved: Layout): Layout {
+function computeLayout(tiles: string[], saved: Layout, minimap: MinimapSheet[] | null): Layout {
+    const byName = new Map<string, MinimapSheet>();
+    if (minimap) {
+        for (const m of minimap) byName.set(m.tileName, m);
+    }
+    let scale = 0;
+    if (minimap && minimap.length > 0) {
+        let minWorldX = Infinity;
+        let maxWorldX = -Infinity;
+        for (const m of minimap) {
+            minWorldX = Math.min(minWorldX, m.worldX);
+            maxWorldX = Math.max(maxWorldX, m.worldX + m.worldW);
+        }
+        const worldW = maxWorldX - minWorldX;
+        scale = worldW > 0 ? MAP_TARGET_W / worldW : 0;
+    }
+    let minWX = Infinity;
+    let minWY = Infinity;
+    if (minimap) {
+        for (const m of minimap) {
+            minWX = Math.min(minWX, m.worldX);
+            minWY = Math.min(minWY, m.worldY);
+        }
+    }
     const out: Layout = {};
     tiles.forEach((name, i) => {
-        out[name] = saved[name] ?? { x: (i % COLS) * TILE, y: Math.floor(i / COLS) * TILE };
+        if (saved[name]) {
+            out[name] = saved[name];
+            return;
+        }
+        const sheet = byName.get(name);
+        if (sheet && scale > 0) {
+            out[name] = {
+                x: (sheet.worldX - minWX) * scale,
+                y: (sheet.worldY - minWY) * scale,
+                w: sheet.worldW * scale,
+                h: sheet.worldH * scale
+            };
+            return;
+        }
+        out[name] = { x: (i % COLS) * TILE, y: Math.floor(i / COLS) * TILE };
     });
     return out;
 }
@@ -604,12 +658,14 @@ interface PlacedTiles {
 function TileInfoModal({
     rx,
     ry,
+    zones,
     placed,
     clientRoot,
     onClose
 }: {
     rx: number;
     ry: number;
+    zones: Zone[];
     placed: PlacedTiles;
     clientRoot: string;
     onClose: () => void;
@@ -643,10 +699,17 @@ function TileInfoModal({
         return { regionLatMin, regionLatMax, regionLngMin, regionLngMax, tiles: overlaps };
     }, [rx, ry, placed]);
 
+    const [tab, setTab] = useState<"zones" | "npcs">("zones");
+    const zonesHere = useMemo(() => zonesInRegion(zones, rx, ry), [zones, rx, ry]);
+    const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
+    useEffect(() => {
+        setSelectedZone(null);
+    }, [rx, ry]);
+
     return (
         <div className="absolute inset-0 z-[2000] flex items-center justify-center bg-black/60 p-6" onClick={onClose}>
             <div
-                className="flex max-h-[85vh] w-[640px] max-w-full flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
+                className="flex h-[640px] max-h-[85vh] w-[960px] max-w-full flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
             >
                 <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] px-5 py-3">
@@ -661,30 +724,187 @@ function TileInfoModal({
                         ×
                     </button>
                 </header>
-                <div className="flex shrink-0 items-center justify-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
-                    {regionInfo ? (
-                        <div
-                            className="overflow-hidden border border-[var(--color-border)]"
-                            style={{
-                                aspectRatio: `${regionInfo.regionLngMax - regionInfo.regionLngMin} / ${
-                                    regionInfo.regionLatMax - regionInfo.regionLatMin
-                                }`,
-                                width: "100%",
-                                maxWidth: "100%",
-                                maxHeight: "480px"
-                            }}
-                        >
-                            <RegionCrop info={regionInfo} clientRoot={clientRoot} />
-                        </div>
-                    ) : (
-                        <div className="text-[11px] text-[var(--color-text-faint)]">no tile covers this region</div>
-                    )}
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
-                    {/* room for zones / spawns / hunting / notes — added later */}
+                <div className="flex min-h-0 flex-1">
+                    <div className="flex w-[480px] shrink-0 items-center justify-center border-r border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                        {regionInfo ? (
+                            <div
+                                className="relative overflow-hidden border border-[var(--color-border)]"
+                                style={{
+                                    aspectRatio: `${regionInfo.regionLngMax - regionInfo.regionLngMin} / ${
+                                        regionInfo.regionLatMax - regionInfo.regionLatMin
+                                    }`,
+                                    width: "100%",
+                                    maxWidth: "100%",
+                                    maxHeight: "100%"
+                                }}
+                            >
+                                <RegionCrop info={regionInfo} clientRoot={clientRoot} />
+                                {selectedZone && <ZoneOverlay zone={selectedZone} rx={rx} ry={ry} />}
+                            </div>
+                        ) : (
+                            <div className="text-[11px] text-[var(--color-text-faint)]">no tile covers this region</div>
+                        )}
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                        {selectedZone ? (
+                            <ZoneDetail zone={selectedZone} onBack={() => setSelectedZone(null)} />
+                        ) : (
+                            <>
+                                <div className="flex shrink-0 border-b border-[var(--color-border)]">
+                                    <TabButton active={tab === "zones"} onClick={() => setTab("zones")}>
+                                        Zones{" "}
+                                        <span className="ml-1.5 text-[var(--color-text-faint)]">
+                                            {zonesHere.length}
+                                        </span>
+                                    </TabButton>
+                                    <TabButton active={tab === "npcs"} onClick={() => setTab("npcs")}>
+                                        NPCs
+                                    </TabButton>
+                                </div>
+                                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
+                                    {tab === "zones" ? (
+                                        <ZonesList zones={zonesHere} onSelect={setSelectedZone} />
+                                    ) : (
+                                        <div className="text-[11px] text-[var(--color-text-faint)]">
+                                            NPCs for this region will appear here.
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>
+    );
+}
+
+function ZonesList({ zones, onSelect }: { zones: Zone[]; onSelect: (z: Zone) => void }) {
+    if (zones.length === 0) {
+        return <div className="text-[11px] text-[var(--color-text-faint)]">No zones cover this region.</div>;
+    }
+    return (
+        <div className="flex flex-col">
+            {zones.map((z, i) => (
+                <button
+                    type="button"
+                    key={`${z.name}:${i}`}
+                    onClick={() => onSelect(z)}
+                    className="flex items-center gap-2 border-b border-white/5 py-1.5 text-left last:border-b-0 hover:bg-white/5"
+                >
+                    <span
+                        className="inline-block h-2 w-2 shrink-0 rounded-sm"
+                        style={{ background: zoneColor(z.type) }}
+                        title={zoneTypeInfo(z.type)}
+                    />
+                    <span className="flex-1 truncate" title={z.name}>
+                        {z.name}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-[var(--color-text-faint)]" title={zoneTypeInfo(z.type)}>
+                        {z.type}
+                    </span>
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function zonePolygonPoints(z: Zone): Array<[number, number]> {
+    if (z.points.length === 2) {
+        const [a, b] = z.points;
+        return [a, [b[0], a[1]], b, [a[0], b[1]]];
+    }
+    return z.points;
+}
+
+function ZoneOverlay({ zone, rx, ry }: { zone: Zone; rx: number; ry: number }) {
+    const x0 = (rx - 20) * REGION_SIZE;
+    const y0 = (ry - 18) * REGION_SIZE;
+    const pts = zonePolygonPoints(zone)
+        .map(([x, y]) => `${x},${y}`)
+        .join(" ");
+    const color = zoneColor(zone.type);
+    return (
+        <svg
+            className="pointer-events-none absolute inset-0 h-full w-full"
+            viewBox={`${x0} ${y0} ${REGION_SIZE} ${REGION_SIZE}`}
+            preserveAspectRatio="none"
+        >
+            <polygon
+                points={pts}
+                fill={color}
+                fillOpacity={0.15}
+                stroke={color}
+                strokeOpacity={0.9}
+                strokeWidth={2}
+                vectorEffect="non-scaling-stroke"
+            />
+        </svg>
+    );
+}
+
+function ZoneDetail({ zone, onBack }: { zone: Zone; onBack: () => void }) {
+    const [cx, cy] = zoneCentroid(zone);
+    const { rx: zrx, ry: zry } = regionOf(cx, cy);
+    const info = zoneTypeInfo(zone.type);
+    const rows: Array<[string, string]> = [
+        ["type", zone.type || "—"],
+        ["Z range", `${zone.minZ} … ${zone.maxZ}`],
+        ["vertices", String(zone.points.length)],
+        ["centre", `${cx}, ${cy}`],
+        ["region", `${zrx}_${zry}`],
+        ...zone.stats.map((s) => [s.name, s.val] as [string, string])
+    ];
+    return (
+        <div className="flex h-full flex-col">
+            <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-5 py-2">
+                <button
+                    type="button"
+                    onClick={onBack}
+                    className="rounded px-1.5 py-0.5 text-[11px] text-[var(--color-text-faint)] hover:bg-white/10 hover:text-[var(--color-text)]"
+                >
+                    ← back
+                </button>
+                <span
+                    className="ml-1 inline-block h-2 w-2 shrink-0 rounded-sm"
+                    style={{ background: zoneColor(zone.type) }}
+                />
+                <span className="truncate font-mono text-[12px] text-[var(--color-text)]" title={zone.name}>
+                    {zone.name}
+                </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
+                {info && (
+                    <p className="mb-3 rounded bg-white/5 px-2.5 py-1.5 text-[11px] leading-relaxed text-[var(--color-text-faint)]">
+                        {info}
+                    </p>
+                )}
+                <div className="flex flex-col gap-1 font-mono text-[11px]">
+                    {rows.map(([k, v], i) => (
+                        <div key={`${k}:${i}`} className="flex justify-between gap-3">
+                            <span className="shrink-0 text-[var(--color-text-faint)]">{k}</span>
+                            <span className="break-all text-right">{v}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`-mb-px border-b-2 px-4 py-2 text-[12px] transition-colors ${
+                active
+                    ? "border-[var(--color-accent-2)] text-[var(--color-text)]"
+                    : "border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+            }`}
+        >
+            {children}
+        </button>
     );
 }
 
