@@ -104,6 +104,11 @@ impl<'a> Cursor<'a> {
         Ok(u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
     }
 
+    pub fn read_f32(&mut self) -> Result<f32, CursorError> {
+        let b = self.read_bytes(4)?;
+        Ok(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
     /// FString: int32 length, then bytes. Positive → ASCII (length includes
     /// terminating NUL). Negative → UTF-16LE (`|length|` chars including NUL).
     /// Zero → empty.

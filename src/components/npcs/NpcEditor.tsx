@@ -16,6 +16,7 @@ import {
 import { regionOf } from "../../lib/worldCoords";
 import { useSettings } from "../../state/SettingsContext";
 import { SkillInspectorProvider, useInspectSkill } from "../classes/SkillInspector";
+import { NpcModelViewport } from "./NpcModelViewport";
 
 interface Props {
     npcId: number;
@@ -347,6 +348,8 @@ function ModelTab({ npcId }: { npcId: number }) {
     const [resolveError, setResolveError] = useState<string | null>(null);
     const [meshName, setMeshName] = useState<string | null>(null);
     const [meshNameMissing, setMeshNameMissing] = useState(false);
+    const [autoMesh, setAutoMesh] = useState<Awaited<ReturnType<typeof ipc.loadSkeletalMesh>> | null>(null);
+    const [autoMeshError, setAutoMeshError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -354,6 +357,8 @@ function ModelTab({ npcId }: { npcId: number }) {
         setResolveError(null);
         setMeshName(null);
         setMeshNameMissing(false);
+        setAutoMesh(null);
+        setAutoMeshError(null);
         if (!clientRoot || !npcId) return;
         (async () => {
             setResolving(true);
@@ -374,6 +379,15 @@ function ModelTab({ npcId }: { npcId: number }) {
                 const r = await ipc.resolveNpcModel(clientRoot, mn);
                 if (cancelled) return;
                 setResolved(r);
+                // Eagerly decode the mesh so the viewport has something to draw.
+                if (r.status === "ok") {
+                    try {
+                        const m = await ipc.loadSkeletalMesh(clientRoot, mn);
+                        if (!cancelled) setAutoMesh(m);
+                    } catch (e) {
+                        if (!cancelled) setAutoMeshError(String(e));
+                    }
+                }
             } catch (e) {
                 if (!cancelled) setResolveError(String(e));
             } finally {
@@ -428,10 +442,31 @@ function ModelTab({ npcId }: { npcId: number }) {
     return (
         <div className="flex h-full min-h-[420px] flex-col gap-3">
             <div
-                className="flex flex-1 items-center justify-center rounded border border-dashed border-[var(--color-border)] bg-black/40 text-[11px] text-[var(--color-text-faint)]"
+                className="relative flex flex-1 items-center justify-center overflow-hidden rounded border border-[var(--color-border)] bg-black/40"
                 data-npc-model-viewport
             >
-                model viewport — not wired yet
+                {autoMesh ? (
+                    <NpcModelViewport mesh={autoMesh} />
+                ) : autoMeshError ? (
+                    <div className="p-4 text-[11px] text-[var(--color-danger)]">
+                        Decode failed: {autoMeshError}
+                    </div>
+                ) : resolving ? (
+                    <div className="text-[11px] text-[var(--color-text-faint)]">resolving model…</div>
+                ) : meshNameMissing ? (
+                    <div className="text-[11px] text-[var(--color-text-faint)]">
+                        No client model for this NPC.
+                    </div>
+                ) : (
+                    <div className="text-[11px] text-[var(--color-text-faint)]">
+                        no mesh loaded yet
+                    </div>
+                )}
+                {autoMesh && (
+                    <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-[var(--color-text-faint)]">
+                        {(autoMesh.positions.length / 3).toLocaleString()} verts — drag to orbit, scroll to zoom
+                    </div>
+                )}
             </div>
             <ResolvedModelPanel
                 npcId={npcId}
@@ -580,6 +615,58 @@ function ResolvedModelPanel({
     meshName: string | null;
     meshNameMissing: boolean;
 }) {
+    const [meshLoading, setMeshLoading] = useState(false);
+    const [mesh, setMesh] = useState<Awaited<ReturnType<typeof ipc.loadSkeletalMesh>> | null>(null);
+    const [meshError, setMeshError] = useState<string | null>(null);
+    const [hexDump, setHexDump] = useState<Awaited<ReturnType<typeof ipc.dumpMeshPayload>> | null>(null);
+    const [dumpView, setDumpView] = useState<"hex" | "u32" | "f32">("hex");
+
+    useEffect(() => {
+        setMesh(null);
+        setMeshError(null);
+        setHexDump(null);
+    }, [resolved?.export?.fullName]);
+
+    const loadMesh = async () => {
+        if (!meshName || meshLoading) return;
+        setMeshLoading(true);
+        setMeshError(null);
+        try {
+            const m = await ipc.loadSkeletalMesh(clientRoot, meshName);
+            setMesh(m);
+        } catch (e) {
+            setMeshError(String(e));
+        } finally {
+            setMeshLoading(false);
+        }
+    };
+
+    const dumpPayload = async (offsetAfterProps = 0) => {
+        if (!meshName) return;
+        try {
+            const d = await ipc.dumpMeshPayload(clientRoot, meshName, 256, offsetAfterProps);
+            setHexDump(d);
+        } catch (e) {
+            setMeshError(String(e));
+        }
+    };
+    const dumpAfterPositions = async () => {
+        if (!mesh) return;
+        // 8 byte header (version + count) + vertex_count × 6 bytes
+        const offset = 8 + (mesh.positions.length / 3) * 6;
+        await dumpPayloadAt(offset, 1024);
+    };
+    const dumpPayloadAt = async (offsetAfterProps: number, nbytes = 1024) => {
+        if (!meshName) return;
+        try {
+            const d = await ipc.dumpMeshPayload(clientRoot, meshName, nbytes, offsetAfterProps);
+            setHexDump(d);
+        } catch (e) {
+            setMeshError(String(e));
+        }
+    };
+    const [manualOffset, setManualOffset] = useState("");
+    const [manualSize, setManualSize] = useState("512");
     if (!clientRoot) {
         return (
             <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-[11px] text-[var(--color-text-faint)]">
@@ -628,9 +715,146 @@ function ResolvedModelPanel({
                             mono
                         />
                     )}
-                    <div className="pt-1">
+                    <div className="flex items-center gap-2 pt-1">
                         <StatusPill status={resolved.status} detail={resolved.detail} />
+                        {resolved.status === "ok" && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={loadMesh}
+                                    disabled={meshLoading}
+                                    className={`${ADD_BTN} ${meshLoading ? "opacity-50" : ""}`}
+                                >
+                                    {meshLoading ? "decoding…" : mesh ? "re-decode" : "decode mesh"}
+                                </button>
+                                <button type="button" onClick={() => dumpPayload(0)} className={ADD_BTN}>
+                                    dump after props
+                                </button>
+                                {mesh && (
+                                    <button type="button" onClick={dumpAfterPositions} className={ADD_BTN}>
+                                        dump after positions (1024 B)
+                                    </button>
+                                )}
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        className={`${INP} w-24`}
+                                        placeholder="offset"
+                                        value={manualOffset}
+                                        onChange={(e) => setManualOffset(e.target.value)}
+                                    />
+                                    <input
+                                        className={`${INP} w-16`}
+                                        placeholder="size"
+                                        value={manualSize}
+                                        onChange={(e) => setManualSize(e.target.value)}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => dumpPayloadAt(Number(manualOffset) || 0, Number(manualSize) || 256)}
+                                        className={ADD_BTN}
+                                    >
+                                        dump @ offset
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
+                    {meshError && (
+                        <div className="mt-2 rounded border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-2 text-[11px] text-[var(--color-danger)]">
+                            {meshError}
+                        </div>
+                    )}
+                    {hexDump && (
+                        <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+                            <div className="mb-2 flex items-center gap-2">
+                                <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                    payload after property block — {hexDump.bytesDumped} bytes from
+                                    file offset {hexDump.payloadStart.toLocaleString()}
+                                </span>
+                                <div className="ml-auto flex gap-1">
+                                    {(["hex", "u32", "f32"] as const).map((v) => (
+                                        <button
+                                            key={v}
+                                            type="button"
+                                            onClick={() => setDumpView(v)}
+                                            className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                                dumpView === v
+                                                    ? "border-[var(--color-accent-2)] text-[var(--color-accent)]"
+                                                    : "border-[var(--color-border)] text-[var(--color-text-faint)]"
+                                            }`}
+                                        >
+                                            {v}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <pre className="overflow-x-auto whitespace-pre font-mono text-[10px] leading-tight text-[var(--color-text)]">
+                                {dumpView === "hex"
+                                    ? `${hexDump.hex}\n${hexDump.ascii}`
+                                    : dumpView === "u32"
+                                      ? hexDump.u32Grid
+                                      : hexDump.f32Grid}
+                            </pre>
+                        </div>
+                    )}
+                    {mesh && (
+                        <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+                            <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                decoded mesh
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                                <KV k="vertices" v={(mesh.positions.length / 3).toLocaleString()} mono />
+                                <KV k="wedges" v={(mesh.wedgeVertexIndices.length).toLocaleString()} mono />
+                                <KV k="triangles" v={(mesh.triangleWedges.length / 3).toLocaleString()} mono />
+                                <KV k="materials" v={String(mesh.materials.length)} mono />
+                                <KV k="bones" v={String(mesh.bones.length)} mono />
+                                <KV
+                                    k="influences"
+                                    v={`${mesh.influences.length.toLocaleString()} (avg ${
+                                        mesh.positions.length === 0
+                                            ? 0
+                                            : (mesh.influences.length / (mesh.positions.length / 3)).toFixed(2)
+                                    }/vert)`}
+                                    mono
+                                />
+                                <KV
+                                    k="bytes used"
+                                    v={`${mesh.cursorEnd - (resolved.export?.serialOffset ?? 0)} / ${(resolved.export?.serialSize ?? 0).toLocaleString()}`}
+                                    mono
+                                />
+                                <KV
+                                    k="bbox min"
+                                    v={mesh.bounds.min.map((n) => n.toFixed(1)).join(", ")}
+                                    mono
+                                />
+                                <KV
+                                    k="bbox max"
+                                    v={mesh.bounds.max.map((n) => n.toFixed(1)).join(", ")}
+                                    mono
+                                />
+                            </div>
+                            {mesh.bones.length > 0 && (
+                                <div className="mt-2">
+                                    <div className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                        first 6 bones
+                                    </div>
+                                    <div className="space-y-0.5 font-mono text-[10px]">
+                                        {mesh.bones.slice(0, 6).map((b, i) => (
+                                            <div key={i} className="flex gap-2">
+                                                <span className="w-6 shrink-0 text-[var(--color-text-faint)]">
+                                                    {i}
+                                                </span>
+                                                <span className="flex-1 truncate">{b.name}</span>
+                                                <span className="text-[var(--color-text-faint)]">
+                                                    parent {b.parentIndex}, children {b.numChildren}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
             {resolveError && (

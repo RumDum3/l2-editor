@@ -27,7 +27,10 @@ use commands::textures::{
     clear_texture_cache, list_map_regions, list_textures, read_region_terrain_texture,
     read_texture,
 };
-use commands::model::{build_package_index, dump_package, list_package_exports, resolve_npc_model};
+use commands::model::{
+    build_package_index, dump_mesh_payload, dump_package, list_package_exports, load_skeletal_mesh,
+    resolve_npc_model,
+};
 use commands::npc::{load_npc_xml, save_npc_xml};
 use commands::spawns::save_spawn_edits;
 use commands::xml::{list_xml_files, read_xml, write_xml};
@@ -94,6 +97,8 @@ pub fn run() {
             list_package_exports,
             build_package_index,
             resolve_npc_model,
+            load_skeletal_mesh,
+            dump_mesh_payload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

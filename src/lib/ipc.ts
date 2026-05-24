@@ -89,7 +89,48 @@ export const ipc = {
     buildPackageIndex: (clientRoot: string) =>
         invoke<PackageIndexSummary>("build_package_index", { clientRoot }),
     resolveNpcModel: (clientRoot: string, meshName: string) =>
-        invoke<ResolvedNpcModel>("resolve_npc_model", { clientRoot, meshName })
+        invoke<ResolvedNpcModel>("resolve_npc_model", { clientRoot, meshName }),
+    loadSkeletalMesh: (clientRoot: string, meshName: string) =>
+        invoke<MeshData>("load_skeletal_mesh", { clientRoot, meshName }),
+    dumpMeshPayload: (clientRoot: string, meshName: string, nbytes?: number, offsetAfterProps?: number) =>
+        invoke<MeshHexDump>("dump_mesh_payload", { clientRoot, meshName, nbytes, offsetAfterProps })
+};
+
+export type MeshHexDump = {
+    exportName: string;
+    payloadStart: number;
+    serialOffset: number;
+    serialSize: number;
+    bytesDumped: number;
+    hex: string;
+    ascii: string;
+    u32Grid: string;
+    f32Grid: string;
+};
+
+export type MeshData = {
+    exportName: string;
+    bounds: { min: [number, number, number]; max: [number, number, number]; center: [number, number, number]; radius: number };
+    positions: number[];
+    triangleWedges: number[];
+    triangleMaterials: number[];
+    wedgeUvs: number[];
+    wedgeVertexIndices: number[];
+    wedgeMaterials: number[];
+    materials: Array<{ flags: number; textureIndex: number }>;
+    bones: Array<{
+        name: string;
+        flags: number;
+        orientation: [number, number, number, number];
+        position: [number, number, number];
+        length: number;
+        size: [number, number, number];
+        numChildren: number;
+        parentIndex: number;
+    }>;
+    influences: Array<{ vertexIndex: number; boneIndex: number; weight: number }>;
+    serialEnd: number;
+    cursorEnd: number;
 };
 
 export type PackageIndexSummary = {

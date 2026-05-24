@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use model_engine::{ExportEntry, Package, PackageSummary};
+use model_engine::{
+    decode_skeletal_mesh, dump_after_properties, ExportEntry, HexDump, MeshData, Package,
+    PackageSummary,
+};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 
@@ -305,6 +308,76 @@ pub async fn resolve_npc_model(
             status,
             detail,
         })
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn dump_mesh_payload(
+    client_root: String,
+    mesh_name: String,
+    nbytes: Option<usize>,
+    offset_after_props: Option<usize>,
+) -> Result<HexDump, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<HexDump, String> {
+        let trimmed = mesh_name.trim();
+        let mut parts = trimmed.splitn(2, '.');
+        let pkg = parts.next().unwrap_or("");
+        let export_path = parts.next().unwrap_or("");
+        let root = PathBuf::from(&client_root);
+        let idx = get_index(&root);
+        let pkg_path = idx
+            .by_stem
+            .get(&pkg.to_ascii_lowercase())
+            .ok_or_else(|| format!("package {pkg} not in client index"))?
+            .clone();
+        let parsed = parsed_package(&pkg_path).map_err(|e| e.to_string())?;
+        let leaf = export_path.rsplit('.').next().unwrap_or(export_path);
+        let export = parsed
+            .find_export(export_path)
+            .or_else(|| parsed.find_export(leaf))
+            .ok_or_else(|| format!("no export '{export_path}' (or leaf '{leaf}')"))?;
+        dump_after_properties(
+            &parsed,
+            export,
+            nbytes.unwrap_or(256),
+            offset_after_props.unwrap_or(0),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn load_skeletal_mesh(
+    client_root: String,
+    mesh_name: String,
+) -> Result<MeshData, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<MeshData, String> {
+        let trimmed = mesh_name.trim();
+        let mut parts = trimmed.splitn(2, '.');
+        let pkg = parts.next().unwrap_or("");
+        let export_path = parts.next().unwrap_or("");
+        if pkg.is_empty() || export_path.is_empty() {
+            return Err(format!("mesh_name doesn't look like 'Package.Object': {trimmed:?}"));
+        }
+        let root = PathBuf::from(&client_root);
+        let idx = get_index(&root);
+        let stem_lc = pkg.to_ascii_lowercase();
+        let pkg_path = idx
+            .by_stem
+            .get(&stem_lc)
+            .ok_or_else(|| format!("package {pkg} not in client index"))?
+            .clone();
+        let parsed = parsed_package(&pkg_path).map_err(|e| e.to_string())?;
+        let leaf = export_path.rsplit('.').next().unwrap_or(export_path);
+        let export = parsed
+            .find_export(export_path)
+            .or_else(|| parsed.find_export(leaf))
+            .ok_or_else(|| format!("no export '{export_path}' (or leaf '{leaf}') in package"))?;
+        decode_skeletal_mesh(&parsed, export).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("join error: {e}"))?
