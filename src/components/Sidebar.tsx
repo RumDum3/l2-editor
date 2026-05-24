@@ -6,12 +6,14 @@ export function Sidebar({
     onShowClasses,
     onShowExperience,
     onShowWorld,
+    onShowNpcs,
     onShowEditor
 }: {
-    view: "editor" | "classes" | "experience" | "world";
+    view: "editor" | "classes" | "experience" | "world" | "npcs";
     onShowClasses: () => void;
     onShowExperience: () => void;
     onShowWorld: () => void;
+    onShowNpcs: () => void;
     onShowEditor: () => void;
 }) {
     const { loaded, selectCategory } = useEditor();
@@ -44,6 +46,14 @@ export function Sidebar({
                 </button>
                 <button type="button" onClick={onShowWorld} className={itemCls(view === "world")} title="World">
                     World
+                </button>
+                <button
+                    type="button"
+                    onClick={onShowNpcs}
+                    className={itemCls(view === "npcs")}
+                    title="NPCs — browse every NPC, see where it spawns (data/stats/npcs/)"
+                >
+                    NPCs
                 </button>
                 {categories.map((p) => {
                     const active = view === "editor" && loaded?.plugin.id === p.id;

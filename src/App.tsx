@@ -5,10 +5,12 @@ import { Dashboard } from "./components/Dashboard";
 import { EditorPane } from "./components/EditorPane";
 import { ExperienceWorkspace } from "./components/experience/ExperienceWorkspace";
 import { WorldWorkspace } from "./components/world/WorldWorkspace";
+import { NpcsWorkspace } from "./components/npcs/NpcsWorkspace";
 
 const ClassesWorkspaceMemo = memo(ClassesWorkspace);
 const ExperienceWorkspaceMemo = memo(ExperienceWorkspace);
 const WorldWorkspaceMemo = memo(WorldWorkspace);
+const NpcsWorkspaceMemo = memo(NpcsWorkspace);
 import { FirstRunWizard } from "./components/FirstRunWizard";
 import { LogsPanel } from "./components/LogsPanel";
 import { ProtocolMismatchModal } from "./components/ProtocolMismatchModal";
@@ -24,7 +26,7 @@ function Inner() {
     const { probe, serverProtocols, config, loaded: configLoaded } = useSettings();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
-    const [view, setView] = useState<"editor" | "classes" | "experience" | "world">("editor");
+    const [view, setView] = useState<"editor" | "classes" | "experience" | "world" | "npcs">("editor");
     const [cameFromClasses, setCameFromClasses] = useState(false);
     const [toolbarExtra, setToolbarExtra] = useState<ReactNode>(null);
     const [wizardOpen, setWizardOpen] = useState(false);
@@ -123,6 +125,7 @@ function Inner() {
     const showClasses = useCallback(() => setView("classes"), []);
     const showExperience = useCallback(() => setView("experience"), []);
     const showWorld = useCallback(() => setView("world"), []);
+    const showNpcs = useCallback(() => setView("npcs"), []);
 
     const editorMain = (() => {
         if (loaded) return mode === "detail" ? <EditorPane /> : <CardGrid />;
@@ -154,6 +157,7 @@ function Inner() {
                         onShowClasses={showClasses}
                         onShowExperience={showExperience}
                         onShowWorld={showWorld}
+                        onShowNpcs={showNpcs}
                         onShowEditor={showEditor}
                     />
                     <main className="relative isolate flex-1 overflow-hidden bg-[var(--color-bg)]">
@@ -166,6 +170,9 @@ function Inner() {
                         </div>
                         <div className={view === "world" ? "h-full" : "hidden"}>
                             <WorldWorkspaceMemo active={view === "world"} />
+                        </div>
+                        <div className={view === "npcs" ? "h-full" : "hidden"}>
+                            <NpcsWorkspaceMemo active={view === "npcs"} />
                         </div>
                     </main>
                 </div>

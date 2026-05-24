@@ -17,7 +17,7 @@ export function Toolbar({
     onOpenSettings: () => void;
     onToggleLogs: () => void;
     logsOpen: boolean;
-    view: "editor" | "classes" | "experience" | "world";
+    view: "editor" | "classes" | "experience" | "world" | "npcs";
     editActions?: ReactNode;
     onBackToClasses?: () => void;
 }) {
