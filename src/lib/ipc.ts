@@ -77,7 +77,11 @@ export const ipc = {
         invoke<number>("save_zone_edits", { edits }),
     saveSpawnEdits: (
         edits: Array<{ filePath: string; npcId: number; oldX: number; oldY: number; newX: number; newY: number }>
-    ) => invoke<number>("save_spawn_edits", { edits })
+    ) => invoke<number>("save_spawn_edits", { edits }),
+    loadNpcXml: (filePath: string, npcId: number) =>
+        invoke<string>("load_npc_xml", { filePath, npcId }),
+    saveNpcXml: (filePath: string, npcId: number, npcXml: string) =>
+        invoke<number>("save_npc_xml", { filePath, npcId, npcXml })
 };
 
 export type SkillnameRow = {
@@ -108,6 +112,7 @@ export type NpcInfo = {
     name: string;
     type: string;
     level: number;
+    filePath: string;
 };
 
 export type SpawnPoint = {

@@ -27,6 +27,7 @@ use commands::textures::{
     clear_texture_cache, list_map_regions, list_textures, read_region_terrain_texture,
     read_texture,
 };
+use commands::npc::{load_npc_xml, save_npc_xml};
 use commands::spawns::save_spawn_edits;
 use commands::xml::{list_xml_files, read_xml, write_xml};
 use commands::zones::save_zone_edits;
@@ -86,6 +87,8 @@ pub fn run() {
             world_spawns::load_world_spawns,
             save_zone_edits,
             save_spawn_edits,
+            load_npc_xml,
+            save_npc_xml,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

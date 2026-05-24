@@ -13,6 +13,7 @@ pub struct NpcInfo {
     #[serde(rename = "type")]
     pub kind: String,
     pub level: u32,
+    pub file_path: String,
 }
 
 #[derive(Serialize)]
@@ -61,18 +62,20 @@ fn xml_files(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn npc_info(e: &BytesStart<'_>) -> Option<NpcInfo> {
+fn npc_info(e: &BytesStart<'_>, file_path: &str) -> Option<NpcInfo> {
     let id: u32 = attr(e, b"id")?.trim().parse().ok()?;
     Some(NpcInfo {
         id,
         name: attr(e, b"name").unwrap_or_default(),
         kind: attr(e, b"type").unwrap_or_default(),
         level: attr(e, b"level").and_then(|s| s.trim().parse().ok()).unwrap_or(0),
+        file_path: file_path.to_string(),
     })
 }
 
 fn parse_npc_index(path: &Path) -> Vec<NpcInfo> {
     let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let file_path = path.to_string_lossy().into_owned();
     let mut reader = Reader::from_str(&text);
     let mut out = Vec::new();
     let mut is_list_stack: Vec<bool> = Vec::new();
@@ -82,7 +85,7 @@ fn parse_npc_index(path: &Path) -> Vec<NpcInfo> {
             Ok(Event::Start(e)) => {
                 let name = e.name();
                 if name.as_ref() == b"npc" && is_list_stack.last() == Some(&true) {
-                    if let Some(info) = npc_info(&e) {
+                    if let Some(info) = npc_info(&e, &file_path) {
                         out.push(info);
                     }
                 }
@@ -90,7 +93,7 @@ fn parse_npc_index(path: &Path) -> Vec<NpcInfo> {
             }
             Ok(Event::Empty(e)) => {
                 if e.name().as_ref() == b"npc" && is_list_stack.last() == Some(&true) {
-                    if let Some(info) = npc_info(&e) {
+                    if let Some(info) = npc_info(&e, &file_path) {
                         out.push(info);
                     }
                 }

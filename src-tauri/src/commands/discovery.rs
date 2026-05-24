@@ -25,6 +25,9 @@ const TIER2_PATTERNS: &[(&str, &str)] = &[
     ("minimap_region", "minimapregion"),
     ("hunting_zone", "huntingzone"),
     ("npc_name", "npcname"),
+    ("npc_grp", "npcgrp"),
+    ("npc_string", "npcstring"),
+    ("npc_teleporter", "npcteleporter"),
 ];
 
 #[tauri::command]

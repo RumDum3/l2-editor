@@ -173,7 +173,7 @@ function Inner() {
                             <WorldWorkspaceMemo active={view === "world"} />
                         </div>
                         <div className={view === "npcs" ? "h-full" : "hidden"}>
-                            <NpcsWorkspaceMemo active={view === "npcs"} />
+                            <NpcsWorkspaceMemo active={view === "npcs"} onOpenSkill={openSkillInEditor} />
                         </div>
                     </main>
                 </div>

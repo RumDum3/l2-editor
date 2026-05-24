@@ -1,19 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ClientNpc, loadClientNpcs } from "../../lib/clientNpcs";
-import type { NpcInfo, SpawnPoint } from "../../lib/ipc";
+import { ipc, type NpcInfo, type SpawnPoint } from "../../lib/ipc";
+import { logger } from "../../lib/logger";
 import { EMPTY_SPAWN_INDEX, loadWorldSpawns, type WorldSpawnIndex } from "../../lib/spawns";
-import { regionOf } from "../../lib/worldCoords";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
 import { EditActions } from "../EditActions";
+import { NpcEditor } from "./NpcEditor";
 
 function normalizeName(s: string): string {
     const INVISIBLE = /[   　​]/g;
     return s.replace(INVISIBLE, " ").replace(/\s+/g, " ").trim().normalize("NFC");
-}
-
-function codepoints(s: string): string {
-    return [...s].map((ch) => ch.codePointAt(0)?.toString(16).padStart(4, "0") ?? "").join(" ");
 }
 
 interface DriftDetail {
@@ -35,7 +32,13 @@ interface NpcRow {
     hasDrift: boolean;
 }
 
-export function NpcsWorkspace({ active }: { active: boolean }) {
+export function NpcsWorkspace({
+    active,
+    onOpenSkill
+}: {
+    active: boolean;
+    onOpenSkill?: (skillId: number) => void;
+}) {
     const { config } = useSettings();
     const dataRoot = config?.dataRoot ?? "";
 
@@ -62,24 +65,6 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
     }, [active, dataRoot]);
 
     const setToolbarSlot = useSetToolbarSlot();
-    useEffect(() => {
-        if (!active) return;
-        setToolbarSlot(
-            <EditActions
-                onUndo={() => {}}
-                onRedo={() => {}}
-                canUndo={false}
-                canRedo={false}
-                onSave={() => {}}
-                saveDisabled
-                saveTitle="NPC editing is not implemented yet"
-                onReload={load}
-                reloadDisabled={loading}
-            />
-        );
-        return () => setToolbarSlot(null);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [active, setToolbarSlot, loading, dataRoot]);
 
     const rows = useMemo<NpcRow[]>(() => {
         const spawnCount = new Map<number, number>();
@@ -169,15 +154,117 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
     }, [rows, query, typeFilter]);
 
     const selected = useMemo(() => rows.find((r) => r.info.id === selectedId) ?? null, [rows, selectedId]);
-    const selectedIdSet = useMemo(() => new Set(selected?.ids ?? []), [selected]);
-    const selectedSpawns = useMemo<SpawnPoint[]>(() => {
-        if (selectedIdSet.size === 0) return [];
-        return index.spawns.filter((s) => selectedIdSet.has(s.npcId));
-    }, [index, selectedIdSet]);
-    const selectedBosses = useMemo(() => {
-        if (selectedIdSet.size === 0) return [];
-        return index.bosses.filter((b) => selectedIdSet.has(b.npcId));
-    }, [index, selectedIdSet]);
+    const [editVariantId, setEditVariantId] = useState<number | null>(null);
+    useEffect(() => {
+        if (!selected) {
+            setEditVariantId(null);
+            return;
+        }
+        if (editVariantId === null || !selected.ids.includes(editVariantId)) {
+            setEditVariantId(selected.ids[0]);
+        }
+    }, [selected, editVariantId]);
+    const editingNpc = useMemo<NpcInfo | null>(() => {
+        if (!selected || editVariantId === null) return null;
+        return index.npcs.get(editVariantId) ?? null;
+    }, [selected, editVariantId, index]);
+    const editingSpawns = useMemo<SpawnPoint[]>(
+        () => (editVariantId === null ? [] : index.spawns.filter((s) => s.npcId === editVariantId)),
+        [index, editVariantId]
+    );
+    const editingBosses = useMemo(
+        () => (editVariantId === null ? [] : index.bosses.filter((b) => b.npcId === editVariantId)),
+        [index, editVariantId]
+    );
+
+    const [dirty, setDirty] = useState(false);
+    const commitRef = useRef<(() => Promise<void>) | null>(null);
+    const undoRef = useRef<() => void>(() => {});
+    const redoRef = useRef<() => void>(() => {});
+    const [canUndo, setCanUndo] = useState(false);
+    const [canRedo, setCanRedo] = useState(false);
+    const [saving, setSaving] = useState(false);
+
+    const registerCommit = useCallback((commit: (() => Promise<void>) | null) => {
+        commitRef.current = commit;
+    }, []);
+    const registerUndoRedo = useCallback((u: () => void, r: () => void, cu: boolean, cr: boolean) => {
+        undoRef.current = u;
+        redoRef.current = r;
+        setCanUndo(cu);
+        setCanRedo(cr);
+    }, []);
+
+    const { pendingTier2Edits, refreshPendingTier2Edits, syncToClient } = useSettings();
+    const onSavedNameTitle = useCallback(
+        async (id: number, name: string, _title: string) => {
+            const client = clientNpcs.get(id);
+            if (!client) return;
+            if (normalizeName(name) === normalizeName(client.name)) return;
+            try {
+                await ipc.applyGenericDatEdits("npc_name", { id }, { name });
+                await refreshPendingTier2Edits("npc_name");
+                logger.info("npc", `queued NpcName.dat update for #${id}: "${client.name}" → "${name}"`);
+                setClientNpcs((prev) => {
+                    const next = new Map(prev);
+                    next.set(id, { ...client, name });
+                    return next;
+                });
+            } catch (e) {
+                logger.warn("npc", `couldn't queue NpcName.dat update for #${id}`, { message: String(e) });
+            }
+        },
+        [clientNpcs, refreshPendingTier2Edits]
+    );
+
+    const onSave = useCallback(async () => {
+        if (!commitRef.current || saving) return;
+        setSaving(true);
+        try {
+            await commitRef.current();
+            const pending = pendingTier2Edits.get("npc_name");
+            if (pending && pending.size > 0) {
+                await syncToClient();
+            }
+        } finally {
+            setSaving(false);
+        }
+    }, [saving, pendingTier2Edits, syncToClient]);
+
+    const editorMounted = !!editingNpc;
+    useEffect(() => {
+        if (!active) return;
+        const hasPendingClientSync = (pendingTier2Edits.get("npc_name")?.size ?? 0) > 0;
+        const saveDisabled = saving || (!dirty && !hasPendingClientSync) || !editorMounted;
+        const clientHint = hasPendingClientSync
+            ? ` + flush ${pendingTier2Edits.get("npc_name")!.size} NpcName row(s)`
+            : "";
+        setToolbarSlot(
+            <EditActions
+                onUndo={() => undoRef.current()}
+                onRedo={() => redoRef.current()}
+                canUndo={editorMounted && canUndo}
+                canRedo={editorMounted && canRedo}
+                dirty={dirty || hasPendingClientSync}
+                dirtyTitle="Unsaved NPC changes"
+                saving={saving}
+                saveDisabled={saveDisabled}
+                saveLabel={hasPendingClientSync ? `Save${clientHint}` : "Save"}
+                saveTitle={
+                    saveDisabled
+                        ? editorMounted
+                            ? "Nothing to save"
+                            : "Pick an NPC to edit"
+                        : `Write npcs XML${clientHint}`
+                }
+                onSave={onSave}
+                onReload={load}
+                reloadDisabled={loading || saving}
+            />
+        );
+        return () => setToolbarSlot(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [active, dirty, canUndo, canRedo, saving, editorMounted, onSave, loading, pendingTier2Edits]);
 
     if (!dataRoot) {
         return <Placeholder>Set the server data folder in Settings to load NPCs.</Placeholder>;
@@ -289,9 +376,51 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
                     )}
                 </div>
             </div>
-            <div className="min-w-0 flex-1 overflow-y-auto">
-                {selected ? (
-                    <NpcDetailView row={selected} spawns={selectedSpawns} bosses={selectedBosses} />
+            <div className="flex min-w-0 flex-1 flex-col">
+                {selected && selected.ids.length > 1 && (
+                    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[11px]">
+                        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                            variant
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                            {selected.ids.map((id) => (
+                                <button
+                                    key={id}
+                                    type="button"
+                                    onClick={() => setEditVariantId(id)}
+                                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                                        id === editVariantId
+                                            ? "border-[var(--color-accent-2)] bg-[var(--color-surface-2)] text-[var(--color-accent)]"
+                                            : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)]"
+                                    }`}
+                                >
+                                    #{id}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {selected && selected.hasDrift && (
+                    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 px-3 py-1 text-[10px] text-[var(--color-warning)]">
+                        <span className="font-bold">!</span>
+                        <span>
+                            Server disagrees with client NpcName.dat for this NPC — saving will queue a client sync.
+                        </span>
+                    </div>
+                )}
+                {editingNpc ? (
+                    <NpcEditor
+                        key={`${editingNpc.id}|${editingNpc.filePath}`}
+                        npcId={editingNpc.id}
+                        filePath={editingNpc.filePath}
+                        spawns={editingSpawns}
+                        bosses={editingBosses}
+                        onSavedNameTitle={onSavedNameTitle}
+                        onRegisterCommit={registerCommit}
+                        onRegisterUndoRedo={registerUndoRedo}
+                        onDirtyChange={setDirty}
+                        onOpenSkill={onOpenSkill}
+                    />
                 ) : (
                     <div className="flex h-full items-center justify-center text-[12px] text-[var(--color-text-faint)]">
                         Pick an NPC from the list to see its details.
@@ -319,252 +448,6 @@ function driftTitle(row: NpcRow): string {
     }
     if (row.drift.length > 4) lines.push(`  … and ${row.drift.length - 4} more`);
     return lines.join("\n");
-}
-
-function NpcDetailView({
-    row,
-    spawns,
-    bosses
-}: {
-    row: NpcRow;
-    spawns: SpawnPoint[];
-    bosses: Array<{ npcId: number; name: string; type: string; level: number; x: number; y: number; respawn: string }>;
-}) {
-    const totalSpawns = spawns.length + bosses.length;
-    const regions = useMemo(() => {
-        const m = new Map<string, number>();
-        for (const s of spawns) {
-            const { rx, ry } = regionOf(s.x, s.y);
-            const k = `${rx}_${ry}`;
-            m.set(k, (m.get(k) ?? 0) + 1);
-        }
-        for (const b of bosses) {
-            const { rx, ry } = regionOf(b.x, b.y);
-            const k = `${rx}_${ry}`;
-            m.set(k, (m.get(k) ?? 0) + 1);
-        }
-        return [...m.entries()].sort((a, b) => b[1] - a[1]);
-    }, [spawns, bosses]);
-
-    return (
-        <div className="flex flex-col gap-4 p-5 text-[12px] text-[var(--color-text)]">
-            <header className="flex items-baseline gap-3">
-                <span className="font-mono text-[11px] text-[var(--color-text-faint)]">#{row.info.id}</span>
-                <h2 className="font-mono text-base">{row.info.name || "(unnamed)"}</h2>
-                {row.info.type && (
-                    <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
-                        {row.info.type}
-                    </span>
-                )}
-                {row.info.level > 0 && (
-                    <span className="font-mono text-[11px] text-[var(--color-text-faint)]">Lv {row.info.level}</span>
-                )}
-            </header>
-
-            {row.hasDrift && (
-                <section className="rounded border border-[var(--color-warning)] bg-[var(--color-warning)]/5 px-3 py-2">
-                    <div className="mb-1 flex items-center gap-2">
-                        <span className="font-mono text-[12px] font-bold text-[var(--color-warning)]">!</span>
-                        <h3 className="text-[10px] uppercase tracking-[0.15em] text-[var(--color-warning)]">
-                            client out of sync with server
-                        </h3>
-                    </div>
-                    <p className="mb-2 text-[11px] text-[var(--color-text-faint)]">
-                        Client NpcName.dat disagrees with the server for the id{row.drift.length === 1 ? "" : "s"}{" "}
-                        below.
-                    </p>
-                    <div className="flex flex-col gap-2 font-mono text-[11px]">
-                        {row.drift.map((d) => (
-                            <div key={d.id} className="flex flex-col gap-0.5 border-t border-white/5 pt-1.5">
-                                <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-faint)]">
-                                    <span>#{d.id}</span>
-                                    <span>·</span>
-                                    <span>field: name</span>
-                                </div>
-                                <div className="flex items-baseline gap-2">
-                                    <span className="w-12 shrink-0 text-[9px] uppercase tracking-wider text-[var(--color-accent-2)]">
-                                        server
-                                    </span>
-                                    <span
-                                        className="truncate"
-                                        title={`${d.serverName}\nlen ${d.serverName.length}\nU+ ${codepoints(d.serverName)}`}
-                                    >
-                                        {d.serverName || "(empty)"}
-                                    </span>
-                                </div>
-                                <div className="flex items-baseline gap-2">
-                                    <span className="w-12 shrink-0 text-[9px] uppercase tracking-wider text-[var(--color-warning)]">
-                                        client
-                                    </span>
-                                    {d.missingInClient ? (
-                                        <span className="text-[var(--color-warning)]">
-                                            (row missing — client has no entry for this id)
-                                        </span>
-                                    ) : (
-                                        <>
-                                            <span
-                                                className="truncate text-[var(--color-warning)]"
-                                                title={`${d.clientName ?? ""}\nlen ${(d.clientName ?? "").length}\nU+ ${codepoints(d.clientName ?? "")}`}
-                                            >
-                                                {d.clientName || "(empty)"}
-                                            </span>
-                                            {d.clientNick && (
-                                                <span
-                                                    className="shrink-0 text-[10px] text-[var(--color-text-faint)]"
-                                                    title="client nickname / title"
-                                                >
-                                                    «{d.clientNick}»
-                                                </span>
-                                            )}
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
-
-            {row.clients.size > 0 && !row.hasDrift && (
-                <section>
-                    <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
-                        client (NpcName.dat)
-                    </h3>
-                    <div className="flex flex-col gap-1 font-mono text-[11px]">
-                        {[...row.clients.values()].map((c) => (
-                            <KvRow
-                                key={c.id}
-                                k={`#${c.id}`}
-                                v={c.nick ? `${c.name} «${c.nick}»` : c.name || "(empty)"}
-                            />
-                        ))}
-                    </div>
-                </section>
-            )}
-
-            <section>
-                <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
-                    summary
-                </h3>
-                <div className="flex flex-col gap-1 font-mono text-[11px]">
-                    <KvRow
-                        k="npc id"
-                        v={
-                            row.ids.length > 1
-                                ? `${row.info.id}  (+${row.ids.length - 1} variants)`
-                                : String(row.info.id)
-                        }
-                    />
-                    {row.ids.length > 1 && <KvRow k="all ids" v={row.ids.join(", ")} />}
-                    <KvRow k="type" v={row.info.type || "—"} />
-                    <KvRow k="level" v={row.info.level > 0 ? String(row.info.level) : "—"} />
-                    <KvRow k="total spawn points" v={String(totalSpawns)} />
-                    <KvRow k="regions covered" v={String(regions.length)} />
-                </div>
-            </section>
-
-            {bosses.length > 0 && (
-                <section>
-                    <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
-                        boss spawns
-                    </h3>
-                    <div className="flex flex-col">
-                        {bosses.map((b, i) => (
-                            <Row key={i}>
-                                <span className="font-mono text-[11px]">
-                                    {b.x}, {b.y}
-                                </span>
-                                <span className="text-[10px] text-[var(--color-text-faint)]">
-                                    respawn {b.respawn || "—"}
-                                </span>
-                            </Row>
-                        ))}
-                    </div>
-                </section>
-            )}
-
-            {spawns.length > 0 && (
-                <section>
-                    <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
-                        spawn points ({spawns.length})
-                    </h3>
-                    <div className="flex max-h-[300px] flex-col overflow-y-auto rounded border border-[var(--color-border)]">
-                        {spawns.slice(0, 200).map((s, i) => {
-                            const { rx, ry } = regionOf(s.x, s.y);
-                            return (
-                                <Row key={i}>
-                                    <span className="font-mono text-[11px]">
-                                        {s.x}, {s.y}
-                                    </span>
-                                    <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                        region {rx}_{ry}
-                                    </span>
-                                    {s.count > 1 && (
-                                        <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                            ×{s.count}
-                                        </span>
-                                    )}
-                                    {s.respawn && (
-                                        <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-faint)]">
-                                            {s.respawn}
-                                        </span>
-                                    )}
-                                    {!s.inlineCoords && (
-                                        <span className="shrink-0 rounded bg-white/5 px-1 text-[9px] uppercase tracking-wider text-[var(--color-text-faint)]">
-                                            grp
-                                        </span>
-                                    )}
-                                </Row>
-                            );
-                        })}
-                        {spawns.length > 200 && (
-                            <div className="px-2 py-1.5 text-[10px] text-[var(--color-text-faint)]">
-                                … and {spawns.length - 200} more
-                            </div>
-                        )}
-                    </div>
-                </section>
-            )}
-
-            {regions.length > 0 && (
-                <section>
-                    <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
-                        regions
-                    </h3>
-                    <div className="flex flex-wrap gap-1">
-                        {regions.slice(0, 40).map(([region, n]) => (
-                            <span
-                                key={region}
-                                className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-faint)]"
-                            >
-                                {region} ×{n}
-                            </span>
-                        ))}
-                        {regions.length > 40 && (
-                            <span className="text-[10px] text-[var(--color-text-faint)]">
-                                + {regions.length - 40} more
-                            </span>
-                        )}
-                    </div>
-                </section>
-            )}
-        </div>
-    );
-}
-
-function KvRow({ k, v }: { k: string; v: string }) {
-    return (
-        <div className="flex justify-between gap-3">
-            <span className="shrink-0 text-[var(--color-text-faint)]">{k}</span>
-            <span className="break-all text-right">{v}</span>
-        </div>
-    );
-}
-
-function Row({ children }: { children: React.ReactNode }) {
-    return (
-        <div className="flex items-center gap-2 border-b border-white/5 px-2 py-1.5 last:border-b-0">{children}</div>
-    );
 }
 
 function Placeholder({ children }: { children: React.ReactNode }) {

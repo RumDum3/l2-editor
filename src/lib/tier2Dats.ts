@@ -152,6 +152,42 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         indexField: "id",
         appliesTo: "npc",
         chronicle: "any"
+    },
+    {
+        key: "npc_grp",
+        label: "NPC visuals (client)",
+        description:
+            "Per-NPC mesh, textures, sounds, speed and the rest of the client-only render state (NpcGrp.dat). Keyed on npc_id; surfaces in the NPCs workspace.",
+        schemaName: "npcgrp",
+        pickerTitle: "Pick NpcGrp.dat (under <client>/system/)",
+        defaultSubfolder: "system",
+        indexField: "npc_id",
+        appliesTo: "npc",
+        chronicle: "any"
+    },
+    {
+        key: "npc_string",
+        label: "NPC strings (client)",
+        description:
+            "Localized string table referenced by NPC dialogue/server messages (NpcString-*.dat). Keyed on stringID.",
+        schemaName: "npcstring",
+        pickerTitle: "Pick NpcString-<lang>.dat (under <client>/system/)",
+        defaultSubfolder: "system",
+        indexField: "stringID",
+        appliesTo: "npc",
+        chronicle: "any"
+    },
+    {
+        key: "npc_teleporter",
+        label: "NPC teleporters (client)",
+        description:
+            "Per-NPC teleport anchor points and target zone ids the client uses for gatekeepers (NPCTeleporter.dat). Keyed on npc_id.",
+        schemaName: "npcteleporter",
+        pickerTitle: "Pick NPCTeleporter.dat (under <client>/system/)",
+        defaultSubfolder: "system",
+        indexField: "npc_id",
+        appliesTo: "npc",
+        chronicle: "any"
     }
 ];
 
