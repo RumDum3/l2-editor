@@ -7,3 +7,4 @@ pub mod skill_name;
 pub mod skillgrp;
 pub mod textures;
 pub mod xml;
+pub mod zones;

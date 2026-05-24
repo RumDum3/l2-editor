@@ -72,7 +72,9 @@ export const ipc = {
     saveSkillgrp: (targetPath: string) => invoke<DatSaveResult>("save_skillgrp", { targetPath }),
     loadDat: (path: string) => invoke<LoadedDat>("load_dat", { path }),
     saveDat: (path: string, record: unknown, meta?: DatMeta) =>
-        invoke<DatSaveResult>("save_dat", { path, record, meta })
+        invoke<DatSaveResult>("save_dat", { path, record, meta }),
+    saveZoneEdits: (edits: Array<{ filePath: string; zoneName: string; points: Array<[number, number]> }>) =>
+        invoke<number>("save_zone_edits", { edits })
 };
 
 export type SkillnameRow = {

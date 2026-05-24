@@ -88,7 +88,11 @@ export function EditActions({
                 onClick={onSave}
                 disabled={saveDisabled}
                 title={saveTitle}
-                className={`inline-flex items-center gap-1 ${BTN}`}
+                className={`inline-flex items-center gap-1 ${BTN} ${
+                    !saveDisabled
+                        ? "border-[var(--color-accent-2)] text-[var(--color-accent)] shadow-[0_0_0_1px_var(--color-accent-2)]"
+                        : ""
+                }`}
             >
                 <Save size={13} aria-hidden /> {saving ? "Saving…" : saveLabel}
             </button>

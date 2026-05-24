@@ -1,14 +1,17 @@
 import "leaflet/dist/leaflet.css";
-import { CRS, type LatLngBoundsExpression, type LeafletMouseEvent, type PathOptions } from "leaflet";
+import { CRS, divIcon, type LatLngBoundsExpression, type LeafletMouseEvent, type PathOptions } from "leaflet";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ImageOverlay, MapContainer, Polygon, Rectangle, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { ImageOverlay, MapContainer, Marker, Polygon, Rectangle, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import { listTextures, loadTexture, subscribeTexture, type TextureEntry } from "../../lib/textureCache";
 import { setJsonPref, setStringSet, toggleStringSetMember, useJsonPref, useStringSet } from "../../lib/uiPrefs";
 import { mapToWorld, REGION_SIZE, regionOf, WORLD, WORLD_H, WORLD_W, worldToMap } from "../../lib/worldCoords";
+import { ipc } from "../../lib/ipc";
 import { loadMinimapRegions, type MinimapSheet } from "../../lib/minimapRegions";
 import { loadZones, type Zone, zoneCentroid, zoneColor, zonesInRegion, zoneTypeInfo } from "../../lib/zones";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
+import { Pencil } from "lucide-react";
+
 import { EditActions } from "../EditActions";
 
 const RADAR_PACKAGE = "L2_RadarMap";
@@ -76,6 +79,119 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
 
     const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null);
 
+    const [editingZone, setEditingZone] = useState<Zone | null>(null);
+    const [editReturnTo, setEditReturnTo] = useState<{ rx: number; ry: number } | null>(null);
+    const [livePoints, setLivePoints] = useState<Array<[number, number]> | null>(null);
+    const [zoneHistory, setZoneHistory] = useState<{
+        snapshots: Array<Array<[number, number]>>;
+        index: number;
+    }>({ snapshots: [], index: -1 });
+    const committedPoints = zoneHistory.index >= 0 ? (zoneHistory.snapshots[zoneHistory.index] ?? null) : null;
+    const polygonPoints = livePoints ?? committedPoints;
+    const canUndoZone = zoneHistory.index > 0;
+    const canRedoZone = zoneHistory.index >= 0 && zoneHistory.index < zoneHistory.snapshots.length - 1;
+
+    const startZoneEdit = useCallback((z: Zone, from: { rx: number; ry: number }) => {
+        setEditReturnTo(from);
+        setSelected(null);
+        setEditingZone(z);
+        setLivePoints(null);
+        setZoneHistory({ snapshots: [zonePolygonPoints(z)], index: 0 });
+    }, []);
+    const cancelZoneEdit = useCallback(() => {
+        setEditingZone(null);
+        setLivePoints(null);
+        setZoneHistory({ snapshots: [], index: -1 });
+        if (editReturnTo) setSelected(editReturnTo);
+        setEditReturnTo(null);
+    }, [editReturnTo]);
+    const onVertexDrag = useCallback(
+        (i: number, p: [number, number]) => {
+            setLivePoints((prev) => {
+                const base = prev ?? committedPoints;
+                if (!base) return prev;
+                const next = base.slice();
+                next[i] = p;
+                return next;
+            });
+        },
+        [committedPoints]
+    );
+    const onVertexDragEnd = useCallback(
+        (i: number, p: [number, number]) => {
+            if (!committedPoints) return;
+            const next = committedPoints.slice();
+            next[i] = p;
+            setZoneHistory((prev) => {
+                const truncated = prev.snapshots.slice(0, prev.index + 1);
+                truncated.push(next);
+                return { snapshots: truncated, index: truncated.length - 1 };
+            });
+            setLivePoints(null);
+        },
+        [committedPoints]
+    );
+    const undoZone = useCallback(() => {
+        setZoneHistory((prev) => {
+            if (prev.index <= 0) return prev;
+            return { ...prev, index: prev.index - 1 };
+        });
+        setLivePoints(null);
+    }, []);
+    const redoZone = useCallback(() => {
+        setZoneHistory((prev) => {
+            if (prev.index >= prev.snapshots.length - 1) return prev;
+            return { ...prev, index: prev.index + 1 };
+        });
+        setLivePoints(null);
+    }, []);
+
+    const [savingZone, setSavingZone] = useState(false);
+    const saveZone = useCallback(async () => {
+        if (!editingZone || !committedPoints) return;
+        if (zoneHistory.index <= 0) return;
+        setSavingZone(true);
+        try {
+            const points = committedPoints.map(([x, y]) => [Math.round(x), Math.round(y)] as [number, number]);
+            await ipc.saveZoneEdits([
+                {
+                    filePath: editingZone.filePath,
+                    zoneName: editingZone.name,
+                    points
+                }
+            ]);
+            const savedZone = editingZone;
+            const savedPoints = committedPoints;
+            setZones((prev) => prev.map((z) => (z === savedZone ? { ...z, points: savedPoints } : z)));
+            setEditingZone(null);
+            setZoneHistory({ snapshots: [], index: -1 });
+            setLivePoints(null);
+            if (editReturnTo) setSelected(editReturnTo);
+            setEditReturnTo(null);
+        } catch (e) {
+            window.alert(`Save failed: ${e}`);
+        } finally {
+            setSavingZone(false);
+        }
+    }, [editingZone, committedPoints, zoneHistory.index, editReturnTo]);
+
+    useEffect(() => {
+        if (!editingZone) return;
+        const onKey = (e: KeyboardEvent) => {
+            const meta = e.ctrlKey || e.metaKey;
+            if (!meta) return;
+            if (e.key === "z" && !e.shiftKey) {
+                e.preventDefault();
+                undoZone();
+            } else if (e.key === "y" || (e.key === "z" && e.shiftKey)) {
+                e.preventDefault();
+                redoZone();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [editingZone, undoZone, redoZone]);
+
     const [minimap, setMinimap] = useState<MinimapSheet[] | null>(null);
     useEffect(() => {
         let cancelled = false;
@@ -117,21 +233,44 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
     const setToolbarSlot = useSetToolbarSlot();
     useEffect(() => {
         if (!active) return;
+        const zoneDirty = !!editingZone && zoneHistory.index > 0;
         setToolbarSlot(
             <EditActions
-                onUndo={() => {}}
-                onRedo={() => {}}
-                canUndo={false}
-                canRedo={false}
-                onSave={() => {}}
-                saveDisabled
-                saveTitle="World view has no editable state yet"
+                onUndo={editingZone ? undoZone : () => {}}
+                onRedo={editingZone ? redoZone : () => {}}
+                canUndo={!!editingZone && canUndoZone}
+                canRedo={!!editingZone && canRedoZone}
+                onSave={editingZone ? saveZone : () => {}}
+                saving={savingZone}
+                saveDisabled={!zoneDirty || savingZone}
+                dirty={zoneDirty}
+                dirtyTitle="Zone edits pending"
+                saveTitle={
+                    editingZone
+                        ? zoneDirty
+                            ? `Write ${editingZone.name} back to ${editingZone.filePath}`
+                            : "No edits to save"
+                        : "World view has no editable state yet"
+                }
                 onReload={reloadAll}
-                reloadDisabled={reloading}
+                reloadDisabled={reloading || !!editingZone}
             />
         );
         return () => setToolbarSlot(null);
-    }, [active, setToolbarSlot, reloadAll, reloading]);
+    }, [
+        active,
+        setToolbarSlot,
+        reloadAll,
+        reloading,
+        editingZone,
+        undoZone,
+        redoZone,
+        canUndoZone,
+        canRedoZone,
+        saveZone,
+        savingZone,
+        zoneHistory.index
+    ]);
 
     const placed = useMemo(() => {
         if (tiles.length === 0) return null;
@@ -215,9 +354,25 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                         onReady={handleTileReady}
                     />
                 ))}
-                <RegionGrid w={placed.w} h={placed.h} onSelect={(rx, ry) => setSelected({ rx, ry })} />
-                <ZoneLayer zones={zones} enabled={enabledTypes} w={placed.w} h={placed.h} />
+                {!editingZone && (
+                    <RegionGrid w={placed.w} h={placed.h} onSelect={(rx, ry) => setSelected({ rx, ry })} />
+                )}
+                <ZoneLayer zones={zones} enabled={enabledTypes} w={placed.w} h={placed.h} excluding={editingZone} />
                 <CursorTracker w={placed.w} h={placed.h} onMove={setCursor} />
+                {editingZone && polygonPoints && committedPoints && (
+                    <>
+                        <ZoneEditFitView zone={editingZone} w={placed.w} h={placed.h} />
+                        <ZoneEditOverlay
+                            polygonPoints={polygonPoints}
+                            markerPoints={committedPoints}
+                            type={editingZone.type}
+                            w={placed.w}
+                            h={placed.h}
+                            onVertexDrag={onVertexDrag}
+                            onVertexDragEnd={onVertexDragEnd}
+                        />
+                    </>
+                )}
             </MapContainer>
             {cursor && (
                 <div className="pointer-events-none absolute bottom-2 left-2 z-[1000] rounded bg-black/70 px-2 py-1 font-mono text-[11px] text-white/90">
@@ -226,6 +381,16 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                 </div>
             )}
             <ZonePanel types={zoneTypes} enabled={enabledTypes} />
+            {editingZone && polygonPoints && (
+                <ZoneEditPanel
+                    zone={editingZone}
+                    points={polygonPoints}
+                    onCancel={cancelZoneEdit}
+                    onSave={saveZone}
+                    saving={savingZone}
+                    canSave={zoneHistory.index > 0 && !savingZone}
+                />
+            )}
             {selected && (
                 <TileInfoModal
                     rx={selected.rx}
@@ -233,6 +398,7 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                     zones={zones}
                     placed={placed}
                     clientRoot={clientRoot}
+                    onEditZone={startZoneEdit}
                     onClose={() => setSelected(null)}
                 />
             )}
@@ -354,11 +520,24 @@ function setRectStyle(e: LeafletMouseEvent, style: PathOptions) {
     (e.target as unknown as { setStyle(o: PathOptions): void }).setStyle(style);
 }
 
-function ZoneLayer({ zones, enabled, w, h }: { zones: Zone[]; enabled: ReadonlySet<string>; w: number; h: number }) {
+function ZoneLayer({
+    zones,
+    enabled,
+    w,
+    h,
+    excluding
+}: {
+    zones: Zone[];
+    enabled: ReadonlySet<string>;
+    w: number;
+    h: number;
+    excluding?: Zone | null;
+}) {
     return (
         <>
             {zones.map((z, i) => {
                 if (!enabled.has(z.type)) return null;
+                if (excluding && z === excluding) return null;
                 const pts: Array<[number, number]> =
                     z.points.length === 2
                         ? [z.points[0], [z.points[1][0], z.points[0][1]], z.points[1], [z.points[0][0], z.points[1][1]]]
@@ -661,6 +840,7 @@ function TileInfoModal({
     zones,
     placed,
     clientRoot,
+    onEditZone,
     onClose
 }: {
     rx: number;
@@ -668,6 +848,7 @@ function TileInfoModal({
     zones: Zone[];
     placed: PlacedTiles;
     clientRoot: string;
+    onEditZone: (z: Zone, from: { rx: number; ry: number }) => void;
     onClose: () => void;
 }) {
     useEffect(() => {
@@ -747,7 +928,11 @@ function TileInfoModal({
                     </div>
                     <div className="flex min-w-0 flex-1 flex-col">
                         {selectedZone ? (
-                            <ZoneDetail zone={selectedZone} onBack={() => setSelectedZone(null)} />
+                            <ZoneDetail
+                                zone={selectedZone}
+                                onBack={() => setSelectedZone(null)}
+                                onEdit={(z) => onEditZone(z, { rx, ry })}
+                            />
                         ) : (
                             <>
                                 <div className="flex shrink-0 border-b border-[var(--color-border)]">
@@ -843,7 +1028,178 @@ function ZoneOverlay({ zone, rx, ry }: { zone: Zone; rx: number; ry: number }) {
     );
 }
 
-function ZoneDetail({ zone, onBack }: { zone: Zone; onBack: () => void }) {
+const VERTEX_HANDLE = divIcon({
+    className: "",
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
+    html: '<div style="width:10px;height:10px;border:2px solid #f97316;background:#fff;border-radius:50%;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,0.4)"></div>'
+});
+
+function ZoneEditFitView({ zone, w, h }: { zone: Zone; w: number; h: number }) {
+    const map = useMap();
+    useEffect(() => {
+        const prevCenter = map.getCenter();
+        const prevZoom = map.getZoom();
+        const pts = zonePolygonPoints(zone);
+        if (pts.length > 0) {
+            let xMin = Infinity;
+            let xMax = -Infinity;
+            let yMin = Infinity;
+            let yMax = -Infinity;
+            for (const [x, y] of pts) {
+                xMin = Math.min(xMin, x);
+                xMax = Math.max(xMax, x);
+                yMin = Math.min(yMin, y);
+                yMax = Math.max(yMax, y);
+            }
+            const a = worldToMap(xMin, yMin, w, h);
+            const b = worldToMap(xMax, yMax, w, h);
+            const bounds: LatLngBoundsExpression = [
+                [Math.min(a.lat, b.lat), Math.min(a.lng, b.lng)],
+                [Math.max(a.lat, b.lat), Math.max(a.lng, b.lng)]
+            ];
+            map.fitBounds(bounds, { padding: [80, 80], animate: true });
+        }
+        return () => {
+            map.setView(prevCenter, prevZoom, { animate: true });
+        };
+    }, [zone, map, w, h]);
+    return null;
+}
+
+function ZoneEditOverlay({
+    polygonPoints,
+    markerPoints,
+    type,
+    w,
+    h,
+    onVertexDrag,
+    onVertexDragEnd
+}: {
+    polygonPoints: Array<[number, number]>;
+    markerPoints: Array<[number, number]>;
+    type: string;
+    w: number;
+    h: number;
+    onVertexDrag: (i: number, p: [number, number]) => void;
+    onVertexDragEnd: (i: number, p: [number, number]) => void;
+}) {
+    const polyPositions = useMemo(
+        () =>
+            polygonPoints.map(([x, y]) => {
+                const m = worldToMap(x, y, w, h);
+                return [m.lat, m.lng] as [number, number];
+            }),
+        [polygonPoints, w, h]
+    );
+    const markerPositions = useMemo(
+        () =>
+            markerPoints.map(([x, y]) => {
+                const m = worldToMap(x, y, w, h);
+                return [m.lat, m.lng] as [number, number];
+            }),
+        [markerPoints, w, h]
+    );
+    const col = zoneColor(type);
+    const pathOptions = useMemo<PathOptions>(
+        () => ({ color: col, weight: 2.5, opacity: 1, fillColor: col, fillOpacity: 0.2 }),
+        [col]
+    );
+    return (
+        <>
+            <Polygon positions={polyPositions} pathOptions={pathOptions} />
+            {markerPositions.map((pos, i) => (
+                <Marker
+                    key={i}
+                    position={pos}
+                    draggable
+                    icon={VERTEX_HANDLE}
+                    eventHandlers={{
+                        drag: (e) => {
+                            const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
+                            const wp = mapToWorld(ll.lat, ll.lng, w, h);
+                            onVertexDrag(i, [wp.x, wp.y]);
+                        },
+                        dragend: (e) => {
+                            const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
+                            const wp = mapToWorld(ll.lat, ll.lng, w, h);
+                            onVertexDragEnd(i, [wp.x, wp.y]);
+                        }
+                    }}
+                />
+            ))}
+        </>
+    );
+}
+
+function ZoneEditPanel({
+    zone,
+    points,
+    onCancel,
+    onSave,
+    saving,
+    canSave
+}: {
+    zone: Zone;
+    points: Array<[number, number]>;
+    onCancel: () => void;
+    onSave: () => void;
+    saving: boolean;
+    canSave: boolean;
+}) {
+    return (
+        <div className="absolute left-2 top-[88px] z-[1000] flex max-h-[calc(100%-6rem)] w-60 flex-col rounded border border-[var(--color-border)] bg-black/85 text-[10px] text-white/85 shadow">
+            <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-2 py-1.5">
+                <span
+                    className="inline-block h-2 w-2 shrink-0 rounded-sm"
+                    style={{ background: zoneColor(zone.type) }}
+                />
+                <span className="flex-1 truncate font-mono text-[11px] text-white" title={zone.name}>
+                    {zone.name}
+                </span>
+            </div>
+            <div className="flex shrink-0 items-baseline justify-between gap-2 px-2 pt-1.5">
+                <span className="text-[9px] uppercase tracking-[0.15em] text-white/55">vertices</span>
+                <span className="font-mono text-[10px] text-white/55">{points.length}</span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 font-mono">
+                {points.map(([x, y], i) => (
+                    <div key={i} className="flex items-center gap-2 py-0.5">
+                        <span className="w-5 shrink-0 text-white/45">#{i}</span>
+                        <span className="flex-1 truncate text-white/90">
+                            {Math.round(x)}, {Math.round(y)}
+                        </span>
+                    </div>
+                ))}
+            </div>
+            <div className="flex shrink-0 gap-1 border-t border-white/10 p-2">
+                <button
+                    type="button"
+                    onClick={onSave}
+                    disabled={!canSave}
+                    title={canSave ? `Write ${zone.name} back to its XML file` : "No edits to save"}
+                    className={`flex-1 rounded border px-2 py-1 text-[11px] disabled:opacity-40 ${
+                        canSave
+                            ? "border-[var(--color-accent-2)] bg-[var(--color-surface-2)] text-[var(--color-accent)]"
+                            : "border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent-2)]"
+                    }`}
+                >
+                    {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={saving}
+                    className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px] hover:border-[var(--color-accent-2)] disabled:opacity-40"
+                >
+                    Cancel
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ZoneDetail({ zone, onBack, onEdit }: { zone: Zone; onBack: () => void; onEdit: (z: Zone) => void }) {
     const [cx, cy] = zoneCentroid(zone);
     const { rx: zrx, ry: zry } = regionOf(cx, cy);
     const info = zoneTypeInfo(zone.type);
@@ -872,6 +1228,14 @@ function ZoneDetail({ zone, onBack }: { zone: Zone; onBack: () => void }) {
                 <span className="truncate font-mono text-[12px] text-[var(--color-text)]" title={zone.name}>
                     {zone.name}
                 </span>
+                <button
+                    type="button"
+                    onClick={() => onEdit(zone)}
+                    title="Edit this zone's polygon on the world map"
+                    className="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] hover:border-[var(--color-accent-2)]"
+                >
+                    <Pencil size={11} aria-hidden /> Edit
+                </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
                 {info && (

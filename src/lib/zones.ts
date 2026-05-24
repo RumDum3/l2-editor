@@ -9,6 +9,7 @@ export interface Zone {
     minZ: number;
     maxZ: number;
     stats: Array<{ name: string; val: string }>;
+    filePath: string;
 }
 
 export function zoneRing(z: Zone): Array<[number, number]> {
@@ -54,7 +55,8 @@ export async function loadZones(dataRoot: string): Promise<Zone[]> {
                 points,
                 minZ: Number(z.getAttribute("minZ")) || 0,
                 maxZ: Number(z.getAttribute("maxZ")) || 0,
-                stats
+                stats,
+                filePath: f.path
             });
         });
     }

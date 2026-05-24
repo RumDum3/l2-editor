@@ -28,6 +28,7 @@ use commands::textures::{
     read_texture,
 };
 use commands::xml::{list_xml_files, read_xml, write_xml};
+use commands::zones::save_zone_edits;
 use extractor::cache::ExtractorState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -82,6 +83,7 @@ pub fn run() {
             load_dat,
             save_dat,
             world_spawns::load_world_spawns,
+            save_zone_edits,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
