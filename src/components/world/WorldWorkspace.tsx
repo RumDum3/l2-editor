@@ -622,7 +622,7 @@ function TileInfoModal({
         return () => window.removeEventListener("keydown", onKey);
     }, [onClose]);
 
-    const cropInfo = useMemo(() => {
+    const regionInfo = useMemo(() => {
         const x0 = (rx - 20) * REGION_SIZE;
         const y0 = (ry - 18) * REGION_SIZE;
         const tl = worldToMap(x0, y0, placed.w, placed.h);
@@ -631,36 +631,16 @@ function TileInfoModal({
         const regionLatMax = Math.max(tl.lat, br.lat);
         const regionLngMin = Math.min(tl.lng, br.lng);
         const regionLngMax = Math.max(tl.lng, br.lng);
-        const regionCenterLat = (regionLatMin + regionLatMax) / 2;
-        const regionCenterLng = (regionLngMin + regionLngMax) / 2;
-        const tile = placed.items.find((it) => {
+        const overlaps = placed.items.filter((it) => {
             const b = it.bounds as [[number, number], [number, number]];
             const latMin = Math.min(b[0][0], b[1][0]);
             const latMax = Math.max(b[0][0], b[1][0]);
             const lngMin = Math.min(b[0][1], b[1][1]);
             const lngMax = Math.max(b[0][1], b[1][1]);
-            return (
-                regionCenterLat >= latMin &&
-                regionCenterLat <= latMax &&
-                regionCenterLng >= lngMin &&
-                regionCenterLng <= lngMax
-            );
+            return latMin < regionLatMax && latMax > regionLatMin && lngMin < regionLngMax && lngMax > regionLngMin;
         });
-        if (!tile) return null;
-        const b = tile.bounds as [[number, number], [number, number]];
-        const tileLatMin = Math.min(b[0][0], b[1][0]);
-        const tileLatMax = Math.max(b[0][0], b[1][0]);
-        const tileLngMin = Math.min(b[0][1], b[1][1]);
-        const tileLngMax = Math.max(b[0][1], b[1][1]);
-        const tileMapW = tileLngMax - tileLngMin;
-        const tileMapH = tileLatMax - tileLatMin;
-        return {
-            name: tile.name,
-            fracX: (regionLngMax - regionLngMin) / tileMapW,
-            fracY: (regionLatMax - regionLatMin) / tileMapH,
-            offsetX: (regionLngMin - tileLngMin) / tileMapW,
-            offsetY: (tileLatMax - regionLatMax) / tileMapH
-        };
+        if (overlaps.length === 0) return null;
+        return { regionLatMin, regionLatMax, regionLngMin, regionLngMax, tiles: overlaps };
     }, [rx, ry, placed]);
 
     return (
@@ -669,7 +649,7 @@ function TileInfoModal({
                 className="flex max-h-[85vh] w-[640px] max-w-full flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
             >
-                <header className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] px-5 py-3">
+                <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] px-5 py-3">
                     <div className="font-mono text-base text-[var(--color-text)]">
                         Region {rx}_{ry}
                     </div>
@@ -681,74 +661,138 @@ function TileInfoModal({
                         ×
                     </button>
                 </header>
-                {cropInfo ? (
-                    <RegionCrop
-                        tileName={cropInfo.name}
-                        clientRoot={clientRoot}
-                        fracX={cropInfo.fracX}
-                        fracY={cropInfo.fracY}
-                        offsetX={cropInfo.offsetX}
-                        offsetY={cropInfo.offsetY}
-                    />
-                ) : (
-                    <div className="flex h-[200px] items-center justify-center text-[11px] text-[var(--color-text-faint)]">
-                        no tile covers this region
-                    </div>
-                )}
+                <div className="flex shrink-0 items-center justify-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                    {regionInfo ? (
+                        <div
+                            className="overflow-hidden border border-[var(--color-border)]"
+                            style={{
+                                aspectRatio: `${regionInfo.regionLngMax - regionInfo.regionLngMin} / ${
+                                    regionInfo.regionLatMax - regionInfo.regionLatMin
+                                }`,
+                                width: "100%",
+                                maxWidth: "100%",
+                                maxHeight: "480px"
+                            }}
+                        >
+                            <RegionCrop info={regionInfo} clientRoot={clientRoot} />
+                        </div>
+                    ) : (
+                        <div className="text-[11px] text-[var(--color-text-faint)]">no tile covers this region</div>
+                    )}
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
+                    {/* room for zones / spawns / hunting / notes — added later */}
+                </div>
             </div>
         </div>
     );
 }
 
-function RegionCrop({
-    tileName,
-    clientRoot,
-    fracX,
-    fracY,
-    offsetX,
-    offsetY
-}: {
-    tileName: string;
-    clientRoot: string;
-    fracX: number;
-    fracY: number;
-    offsetX: number;
-    offsetY: number;
-}) {
-    const { url, settled } = useTextureUrl(`${RADAR_PACKAGE}.${tileName}`, clientRoot);
+interface RegionInfo {
+    regionLatMin: number;
+    regionLatMax: number;
+    regionLngMin: number;
+    regionLngMax: number;
+    tiles: Array<{ name: string; bounds: LatLngBoundsExpression }>;
+}
+
+function RegionCrop({ info, clientRoot }: { info: RegionInfo; clientRoot: string }) {
+    const [url, setUrl] = useState<string | null>(null);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        setUrl(null);
+        setError(false);
+        composeRegion(info, clientRoot)
+            .then((dataUrl) => {
+                if (cancelled) return;
+                if (dataUrl) setUrl(dataUrl);
+                else setError(true);
+            })
+            .catch(() => {
+                if (!cancelled) setError(true);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [info, clientRoot]);
+
+    if (!url) {
+        return (
+            <div className="flex h-full w-full items-center justify-center text-[11px] text-[var(--color-text-faint)]">
+                {error ? "tile image unavailable" : "loading tile…"}
+            </div>
+        );
+    }
     return (
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-[var(--color-surface-2)] p-4">
-            {url ? (
-                <div
-                    className="relative overflow-hidden border border-[var(--color-border)]"
-                    style={{
-                        aspectRatio: `${fracX} / ${fracY}`,
-                        width: "100%",
-                        maxWidth: "100%",
-                        maxHeight: "100%"
-                    }}
-                >
-                    <img
-                        src={url}
-                        alt={`region tile crop from ${tileName}`}
-                        style={{
-                            position: "absolute",
-                            top: `${(-offsetY * 100) / fracY}%`,
-                            left: `${(-offsetX * 100) / fracX}%`,
-                            width: `${100 / fracX}%`,
-                            height: `${100 / fracY}%`,
-                            maxWidth: "none",
-                            imageRendering: "pixelated"
-                        }}
-                    />
-                </div>
-            ) : (
-                <div className="text-[11px] text-[var(--color-text-faint)]">
-                    {settled ? "tile image unavailable" : "loading tile…"}
-                </div>
-            )}
-        </div>
+        <img
+            src={url}
+            alt="region tile"
+            className="block h-full w-full object-contain"
+            style={{ imageRendering: "pixelated" }}
+        />
     );
+}
+
+async function composeRegion(info: RegionInfo, clientRoot: string): Promise<string | null> {
+    const regionW = info.regionLngMax - info.regionLngMin;
+    const regionH = info.regionLatMax - info.regionLatMin;
+    if (regionW <= 0 || regionH <= 0) return null;
+
+    let dpi = 0;
+    const loaded: Array<{
+        img: HTMLImageElement;
+        tLngMin: number;
+        tLngMax: number;
+        tLatMin: number;
+        tLatMax: number;
+    }> = [];
+    for (const it of info.tiles) {
+        try {
+            const entry = await loadTexture(`${RADAR_PACKAGE}.${it.name}`, clientRoot);
+            if (entry.status !== "loaded" || !entry.url) continue;
+            const img = await loadImg(entry.url);
+            const b = it.bounds as [[number, number], [number, number]];
+            const tLatMin = Math.min(b[0][0], b[1][0]);
+            const tLatMax = Math.max(b[0][0], b[1][0]);
+            const tLngMin = Math.min(b[0][1], b[1][1]);
+            const tLngMax = Math.max(b[0][1], b[1][1]);
+            loaded.push({ img, tLngMin, tLngMax, tLatMin, tLatMax });
+            dpi = Math.max(dpi, img.naturalWidth / (tLngMax - tLngMin));
+        } catch {}
+    }
+    if (loaded.length === 0 || dpi <= 0) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(regionW * dpi));
+    canvas.height = Math.max(1, Math.round(regionH * dpi));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.imageSmoothingEnabled = false;
+
+    let drew = false;
+    for (const t of loaded) {
+        const iLngMin = Math.max(t.tLngMin, info.regionLngMin);
+        const iLngMax = Math.min(t.tLngMax, info.regionLngMax);
+        const iLatMin = Math.max(t.tLatMin, info.regionLatMin);
+        const iLatMax = Math.min(t.tLatMax, info.regionLatMax);
+        if (iLngMin >= iLngMax || iLatMin >= iLatMax) continue;
+        const tW = t.tLngMax - t.tLngMin;
+        const tH = t.tLatMax - t.tLatMin;
+        const sx = ((iLngMin - t.tLngMin) / tW) * t.img.naturalWidth;
+        const sw = ((iLngMax - iLngMin) / tW) * t.img.naturalWidth;
+        const sy = ((t.tLatMax - iLatMax) / tH) * t.img.naturalHeight;
+        const sh = ((iLatMax - iLatMin) / tH) * t.img.naturalHeight;
+        const dx = ((iLngMin - info.regionLngMin) / regionW) * canvas.width;
+        const dw = ((iLngMax - iLngMin) / regionW) * canvas.width;
+        const dy = ((info.regionLatMax - iLatMax) / regionH) * canvas.height;
+        const dh = ((iLatMax - iLatMin) / regionH) * canvas.height;
+        ctx.drawImage(t.img, sx, sy, sw, sh, dx, dy, dw, dh);
+        drew = true;
+    }
+    if (!drew) return null;
+    return canvas.toDataURL("image/png");
 }
 
 function Placeholder({ children }: { children: React.ReactNode }) {
