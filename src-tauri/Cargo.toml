@@ -14,6 +14,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 dat_engine = { path = "../dat_engine" }
+model_engine = { path = "../model_engine" }
+once_cell = { workspace = true }
 
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

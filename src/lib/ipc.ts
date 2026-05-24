@@ -81,7 +81,72 @@ export const ipc = {
     loadNpcXml: (filePath: string, npcId: number) =>
         invoke<string>("load_npc_xml", { filePath, npcId }),
     saveNpcXml: (filePath: string, npcId: number, npcXml: string) =>
-        invoke<number>("save_npc_xml", { filePath, npcId, npcXml })
+        invoke<number>("save_npc_xml", { filePath, npcId, npcXml }),
+    dumpPackage: (path: string, sampleSize?: number) =>
+        invoke<PackageSummary>("dump_package", { path, sampleSize }),
+    listPackageExports: (path: string, classFilter?: string, limit?: number) =>
+        invoke<PackageExportEntry[]>("list_package_exports", { path, classFilter, limit }),
+    buildPackageIndex: (clientRoot: string) =>
+        invoke<PackageIndexSummary>("build_package_index", { clientRoot }),
+    resolveNpcModel: (clientRoot: string, meshName: string) =>
+        invoke<ResolvedNpcModel>("resolve_npc_model", { clientRoot, meshName })
+};
+
+export type PackageIndexSummary = {
+    root: string;
+    packageCount: number;
+    sample: string[];
+};
+
+export type ResolveStatus = "ok" | "packageNotFound" | "packageOpenFailed" | "exportNotFound" | "badMeshName";
+
+export type ResolvedNpcModel = {
+    meshName: string;
+    packageStem: string;
+    packagePath: string | null;
+    exportPath: string;
+    export: PackageExportEntry | null;
+    packageVersion: number | null;
+    packageLicenseeVersion: number | null;
+    status: ResolveStatus;
+    detail: string;
+};
+
+export type PackageExportEntry = {
+    classIndex: number;
+    superIndex: number;
+    packageIndex: number;
+    objectNameIndex: number;
+    objectFlags: number;
+    serialSize: number;
+    serialOffset: number;
+    objectName: string;
+    className: string;
+    fullName: string;
+};
+
+export type PackageImportEntry = {
+    classPackageIndex: number;
+    classNameIndex: number;
+    packageIndex: number;
+    objectNameIndex: number;
+    classPackage: string;
+    className: string;
+    objectName: string;
+    fullName: string;
+};
+
+export type PackageSummary = {
+    path: string;
+    cipherCode: number;
+    version: number;
+    licenseeVersion: number;
+    nameCount: number;
+    importCount: number;
+    exportCount: number;
+    exportsSample: PackageExportEntry[];
+    importsSample: PackageImportEntry[];
+    exportClassHistogram: Array<[string, number]>;
 };
 
 export type SkillnameRow = {

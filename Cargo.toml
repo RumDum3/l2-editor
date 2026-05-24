@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "dat_engine"]
+members = ["src-tauri", "dat_engine", "model_engine"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

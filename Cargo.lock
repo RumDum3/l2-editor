@@ -1982,6 +1982,8 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "image",
+ "model_engine",
+ "once_cell",
  "quick-xml 0.36.2",
  "rayon",
  "regex",
@@ -2164,6 +2166,16 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "model_engine"
+version = "0.1.0"
+dependencies = [
+ "dat_engine",
+ "encoding_rs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

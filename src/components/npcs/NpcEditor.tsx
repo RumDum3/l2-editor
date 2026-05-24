@@ -275,6 +275,7 @@ function NpcEditorInner({
                 <TabBody
                     tab={tab}
                     npc={npcEl}
+                    npcId={npcId}
                     mutate={mutate}
                     revision={revision}
                     spawns={spawns}
@@ -289,6 +290,7 @@ function NpcEditorInner({
 function TabBody({
     tab,
     npc,
+    npcId,
     mutate,
     revision,
     spawns,
@@ -297,6 +299,7 @@ function TabBody({
 }: {
     tab: Tab;
     npc: Element;
+    npcId: number;
     mutate: (fn: (npc: Element) => void) => void;
     revision: number;
     spawns: SpawnPoint[];
@@ -308,7 +311,7 @@ function TabBody({
         case "identity":
             return <IdentityTab {...ctx} />;
         case "model":
-            return <ModelTab />;
+            return <ModelTab npcId={npcId} />;
         case "stats":
             return <StatsTab {...ctx} />;
         case "status":
@@ -336,15 +339,333 @@ function TabBody({
     }
 }
 
-function ModelTab() {
+function ModelTab({ npcId }: { npcId: number }) {
+    const { config } = useSettings();
+    const clientRoot = config?.clientRoot ?? "";
+    const [resolving, setResolving] = useState(false);
+    const [resolved, setResolved] = useState<Awaited<ReturnType<typeof ipc.resolveNpcModel>> | null>(null);
+    const [resolveError, setResolveError] = useState<string | null>(null);
+    const [meshName, setMeshName] = useState<string | null>(null);
+    const [meshNameMissing, setMeshNameMissing] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        setResolved(null);
+        setResolveError(null);
+        setMeshName(null);
+        setMeshNameMissing(false);
+        if (!clientRoot || !npcId) return;
+        (async () => {
+            setResolving(true);
+            try {
+                const rows = await ipc.lookupGenericRows("npc_grp", [npcId]);
+                if (cancelled) return;
+                const row = rows[npcId]?.[0];
+                if (!row) {
+                    setMeshNameMissing(true);
+                    return;
+                }
+                const mn = typeof row["mesh_name"] === "string" ? (row["mesh_name"] as string) : "";
+                if (!mn) {
+                    setMeshNameMissing(true);
+                    return;
+                }
+                setMeshName(mn);
+                const r = await ipc.resolveNpcModel(clientRoot, mn);
+                if (cancelled) return;
+                setResolved(r);
+            } catch (e) {
+                if (!cancelled) setResolveError(String(e));
+            } finally {
+                if (!cancelled) setResolving(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [clientRoot, npcId]);
+
+    const [pkgPath, setPkgPath] = useState(() =>
+        clientRoot ? `${clientRoot.replace(/[\\/]+$/, "")}\\Animations\\LineageNpcs.ukx` : ""
+    );
+    const [busy, setBusy] = useState(false);
+    const [summary, setSummary] = useState<Awaited<ReturnType<typeof ipc.dumpPackage>> | null>(null);
+    const [filteredExports, setFilteredExports] = useState<
+        Awaited<ReturnType<typeof ipc.listPackageExports>> | null
+    >(null);
+    const [classFilter, setClassFilter] = useState("SkeletalMesh");
+    const [error, setError] = useState<string | null>(null);
+
+    const run = async () => {
+        if (!pkgPath || busy) return;
+        setBusy(true);
+        setError(null);
+        try {
+            const s = await ipc.dumpPackage(pkgPath, 12);
+            setSummary(s);
+            setFilteredExports(null);
+        } catch (e) {
+            setError(String(e));
+            setSummary(null);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const runFilter = async () => {
+        if (!pkgPath || busy) return;
+        setBusy(true);
+        try {
+            const list = await ipc.listPackageExports(pkgPath, classFilter || undefined, 200);
+            setFilteredExports(list);
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setBusy(false);
+        }
+    };
+
     return (
-        <div className="flex h-full min-h-[420px] flex-col">
+        <div className="flex h-full min-h-[420px] flex-col gap-3">
             <div
                 className="flex flex-1 items-center justify-center rounded border border-dashed border-[var(--color-border)] bg-black/40 text-[11px] text-[var(--color-text-faint)]"
                 data-npc-model-viewport
             >
                 model viewport — not wired yet
             </div>
+            <ResolvedModelPanel
+                npcId={npcId}
+                clientRoot={clientRoot}
+                resolving={resolving}
+                resolved={resolved}
+                resolveError={resolveError}
+                meshName={meshName}
+                meshNameMissing={meshNameMissing}
+            />
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                <div className="mb-2 flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-faint)]">
+                        package reader · dev probe
+                    </span>
+                    <span className="text-[10px] text-[var(--color-text-faint)]">
+                        (phase 1 — verify the UE2 parser works on your client)
+                    </span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <input
+                        className={`${INP} flex-1`}
+                        placeholder="path to a .ukx / .utx / .usx / .unr"
+                        value={pkgPath}
+                        onChange={(e) => setPkgPath(e.target.value)}
+                    />
+                    <button
+                        type="button"
+                        onClick={run}
+                        disabled={busy || !pkgPath}
+                        className={`${ADD_BTN} ${busy ? "opacity-50" : ""}`}
+                    >
+                        {busy ? "parsing…" : "parse"}
+                    </button>
+                </div>
+                {error && (
+                    <div className="mt-2 rounded border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-2 text-[11px] text-[var(--color-danger)]">
+                        {error}
+                    </div>
+                )}
+                {summary && (
+                    <div className="mt-3 flex items-center gap-2 border-t border-[var(--color-border)] pt-3">
+                        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                            list exports of class
+                        </span>
+                        <input
+                            className={`${INP} w-40`}
+                            value={classFilter}
+                            onChange={(e) => setClassFilter(e.target.value)}
+                            placeholder="SkeletalMesh"
+                        />
+                        <button type="button" onClick={runFilter} className={ADD_BTN} disabled={busy}>
+                            list
+                        </button>
+                    </div>
+                )}
+                {filteredExports && (
+                    <div className="mt-2 max-h-[260px] overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 font-mono text-[11px]">
+                        <div className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                            {filteredExports.length} exports — click to copy full name
+                        </div>
+                        {filteredExports.map((e) => (
+                            <button
+                                key={`${e.fullName}@${e.serialOffset}`}
+                                type="button"
+                                onClick={() => {
+                                    void navigator.clipboard.writeText(e.fullName);
+                                }}
+                                className="flex w-full items-center gap-2 px-1 py-0.5 text-left hover:bg-white/5"
+                                title="Click to copy full name"
+                            >
+                                <span className="truncate">{e.fullName}</span>
+                                <span className="ml-auto shrink-0 text-[var(--color-text-faint)]">
+                                    {(e.serialSize / 1024).toFixed(1)} KB @ {e.serialOffset}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+                {summary && (
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
+                        <div>
+                            <div className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                header
+                            </div>
+                            <div className="font-mono">cipher: {summary.cipherCode || "(plaintext)"}</div>
+                            <div className="font-mono">
+                                version: {summary.version} / licensee {summary.licenseeVersion}
+                            </div>
+                            <div className="font-mono">names: {summary.nameCount}</div>
+                            <div className="font-mono">imports: {summary.importCount}</div>
+                            <div className="font-mono">exports: {summary.exportCount}</div>
+                        </div>
+                        <div>
+                            <div className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                export class histogram
+                            </div>
+                            <div className="max-h-[140px] overflow-y-auto font-mono">
+                                {summary.exportClassHistogram.map(([cls, n]) => (
+                                    <div key={cls} className="flex justify-between gap-3">
+                                        <span className="truncate">{cls}</span>
+                                        <span className="text-[var(--color-text-faint)]">{n}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="col-span-2">
+                            <div className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                first {summary.exportsSample.length} exports
+                            </div>
+                            <div className="font-mono">
+                                {summary.exportsSample.map((e, i) => (
+                                    <div key={i} className="flex gap-2">
+                                        <span className="w-20 shrink-0 text-[var(--color-accent-2)]">
+                                            {e.className}
+                                        </span>
+                                        <span className="truncate">{e.fullName}</span>
+                                        <span className="ml-auto shrink-0 text-[var(--color-text-faint)]">
+                                            {e.serialSize} B @ {e.serialOffset}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function ResolvedModelPanel({
+    npcId,
+    clientRoot,
+    resolving,
+    resolved,
+    resolveError,
+    meshName,
+    meshNameMissing
+}: {
+    npcId: number;
+    clientRoot: string;
+    resolving: boolean;
+    resolved: Awaited<ReturnType<typeof ipc.resolveNpcModel>> | null;
+    resolveError: string | null;
+    meshName: string | null;
+    meshNameMissing: boolean;
+}) {
+    if (!clientRoot) {
+        return (
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-[11px] text-[var(--color-text-faint)]">
+                Set the client folder in Settings to look up this NPC's model.
+            </div>
+        );
+    }
+    return (
+        <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+            <div className="mb-2 flex items-baseline gap-2">
+                <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-faint)]">
+                    npc #{npcId} → model
+                </span>
+                {resolving && <span className="text-[10px] text-[var(--color-text-faint)]">resolving…</span>}
+            </div>
+            {meshNameMissing && (
+                <div className="text-[11px] text-[var(--color-text-faint)]">
+                    No NpcGrp.dat row for this id, or no mesh_name field — can't auto-resolve. Either
+                    NpcGrp isn't loaded, or this NPC has no client-side mesh assigned.
+                </div>
+            )}
+            {meshName && resolved && (
+                <div className="space-y-1.5 text-[11px]">
+                    <KV k="mesh_name" v={meshName} mono />
+                    <KV k="package" v={resolved.packagePath ?? "(not found)"} mono />
+                    <KV
+                        k="export"
+                        v={
+                            resolved.export
+                                ? `${resolved.export.className} ${resolved.export.fullName}`
+                                : `not found in package`
+                        }
+                        mono
+                    />
+                    {resolved.export && (
+                        <KV
+                            k="bytes"
+                            v={`${resolved.export.serialSize.toLocaleString()} @ offset ${resolved.export.serialOffset.toLocaleString()}`}
+                            mono
+                        />
+                    )}
+                    {resolved.packageVersion != null && (
+                        <KV
+                            k="pkg version"
+                            v={`${resolved.packageVersion} / licensee ${resolved.packageLicenseeVersion ?? "?"}`}
+                            mono
+                        />
+                    )}
+                    <div className="pt-1">
+                        <StatusPill status={resolved.status} detail={resolved.detail} />
+                    </div>
+                </div>
+            )}
+            {resolveError && (
+                <div className="rounded border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-2 text-[11px] text-[var(--color-danger)]">
+                    {resolveError}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function StatusPill({ status, detail }: { status: string; detail: string }) {
+    const tone =
+        status === "ok"
+            ? "border-[var(--color-accent-2)] text-[var(--color-accent)]"
+            : status === "packageNotFound" || status === "exportNotFound" || status === "badMeshName"
+              ? "border-[var(--color-warning)] text-[var(--color-warning)]"
+              : "border-[var(--color-danger)] text-[var(--color-danger)]";
+    return (
+        <div className={`inline-flex items-center gap-2 rounded border px-2 py-0.5 text-[10px] ${tone}`} title={detail}>
+            <span className="uppercase tracking-wider">{status}</span>
+            <span className="font-normal opacity-80">{detail}</span>
+        </div>
+    );
+}
+
+function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+    return (
+        <div className="flex gap-3">
+            <span className="w-20 shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                {k}
+            </span>
+            <span className={`min-w-0 flex-1 truncate ${mono ? "font-mono" : ""}`} title={v}>
+                {v}
+            </span>
         </div>
     );
 }

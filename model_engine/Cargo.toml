@@ -1,0 +1,15 @@
+[package]
+name = "model_engine"
+version = "0.1.0"
+edition = "2021"
+description = "UE2 package (.ukx / .utx / .usx / .u) reader for Lineage 2 client assets. Reads through dat_engine's cipher layer so encrypted L2 packages decrypt transparently."
+
+[lib]
+name = "model_engine"
+crate-type = ["rlib"]
+
+[dependencies]
+dat_engine = { path = "../dat_engine" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+encoding_rs = { workspace = true }
