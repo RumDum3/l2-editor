@@ -1,0 +1,139 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist, e.g. v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Verify package.json version matches tag
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ steps.tag.outputs.version }}"
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($tagVersion -ne $pkgVersion) {
+            Write-Error "Tag version $tagVersion does not match package.json version $pkgVersion. Run 'pnpm release $tagVersion' locally to bump first."
+            exit 1
+          }
+          Write-Host "Version OK: $tagVersion"
+
+      - name: Build
+        run: pnpm tauri build
+
+      - name: Stage portable folder
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.tag.outputs.version }}"
+          $stage = "release-portable\L2 Editor $ver"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target\release\l2_editor.exe" "$stage\l2_editor.exe"
+          Copy-Item LICENSE "$stage\LICENSE"
+          @"
+          L2 Editor $ver (portable)
+
+          *** BACK UP YOUR CLIENT AND SERVER FILES BEFORE USING THIS APP. ***
+
+            L2 Editor writes back to your .dat and .xml files in place. Keep a
+            known-good copy of your "system\" and "data\" folders before you
+            point the editor at them.
+
+          Just run l2_editor.exe. No installation required.
+
+          Tested against:
+            Client      Superion, protocol revision 502
+            Server      L2J Mobius Superion
+
+          Requirements:
+            Windows 10 (1803+) or Windows 11 (WebView2 pre-installed).
+            On older Windows, install WebView2 from
+            https://developer.microsoft.com/microsoft-edge/webview2/
+
+          Settings live under: %APPDATA%\L2Editor\
+
+          License: GNU GPL v3.0 (see LICENSE)
+          "@ | Set-Content -Path "$stage\README.txt" -Encoding ascii
+          Compress-Archive -Path $stage -DestinationPath "release-portable\L2_Editor_${ver}_portable.zip" -Force
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found = 1; next }
+            /^## \[/ && found { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "## L2 Editor v$VERSION" > release_notes.md
+            echo "" >> release_notes.md
+            echo "See CHANGELOG.md for details." >> release_notes.md
+          fi
+          echo "--- notes ---"
+          cat release_notes.md
+          echo "--- end ---"
+
+      - name: Create or update draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "L2 Editor ${{ steps.tag.outputs.tag }}"
+          body_path: release_notes.md
+          draft: true
+          fail_on_unmatched_files: true
+          files: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*-setup.exe
+            release-portable/L2_Editor_*_portable.zip

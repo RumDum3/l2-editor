@@ -10,7 +10,9 @@
         "tauri": "tauri",
         "format": "biome format --write .",
         "lint": "biome lint .",
-        "check": "biome check --write ."
+        "check": "biome check --write .",
+        "release": "node scripts/release.mjs",
+        "note": "node scripts/note.mjs"
     },
     "dependencies": {
         "@react-three/drei": "^10.7.7",

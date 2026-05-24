@@ -1,12 +1,24 @@
 import "leaflet/dist/leaflet.css";
 import { CRS, divIcon, type LatLngBoundsExpression, type LeafletMouseEvent, type PathOptions } from "leaflet";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ImageOverlay, MapContainer, Marker, Polygon, Rectangle, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import {
+    CircleMarker,
+    ImageOverlay,
+    MapContainer,
+    Marker,
+    Polygon,
+    Rectangle,
+    Tooltip,
+    useMap,
+    useMapEvents
+} from "react-leaflet";
 import { listTextures, loadTexture, subscribeTexture, type TextureEntry } from "../../lib/textureCache";
 import { setJsonPref, setStringSet, toggleStringSetMember, useJsonPref, useStringSet } from "../../lib/uiPrefs";
 import { mapToWorld, REGION_SIZE, regionOf, WORLD, WORLD_H, WORLD_W, worldToMap } from "../../lib/worldCoords";
 import { ipc } from "../../lib/ipc";
 import { loadMinimapRegions, type MinimapSheet } from "../../lib/minimapRegions";
+import { EMPTY_SPAWN_INDEX, loadWorldSpawns, type WorldSpawnIndex } from "../../lib/spawns";
+import type { NpcInfo, SpawnPoint } from "../../lib/ipc";
 import { loadZones, type Zone, zoneCentroid, zoneColor, zonesInRegion, zoneTypeInfo } from "../../lib/zones";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
@@ -79,6 +91,16 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
 
     const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null);
 
+    const [spawnIndex, setSpawnIndex] = useState<WorldSpawnIndex>(EMPTY_SPAWN_INDEX);
+    useEffect(() => {
+        if (!dataRoot) return;
+        let cancelled = false;
+        loadWorldSpawns(dataRoot).then((s) => !cancelled && setSpawnIndex(s));
+        return () => {
+            cancelled = true;
+        };
+    }, [dataRoot]);
+
     const [editingZone, setEditingZone] = useState<Zone | null>(null);
     const [editReturnTo, setEditReturnTo] = useState<{ rx: number; ry: number } | null>(null);
     const [livePoints, setLivePoints] = useState<Array<[number, number]> | null>(null);
@@ -146,6 +168,102 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
         setLivePoints(null);
     }, []);
 
+    const [editingNpc, setEditingNpc] = useState<{ spawn: SpawnPoint; info: NpcInfo | null } | null>(null);
+    const [npcReturnTo, setNpcReturnTo] = useState<{ rx: number; ry: number } | null>(null);
+    const [liveNpcPos, setLiveNpcPos] = useState<{ x: number; y: number } | null>(null);
+    const [npcHistory, setNpcHistory] = useState<{
+        snapshots: Array<{ x: number; y: number }>;
+        index: number;
+    }>({ snapshots: [], index: -1 });
+    const committedNpcPos = npcHistory.index >= 0 ? (npcHistory.snapshots[npcHistory.index] ?? null) : null;
+    const displayNpcPos = liveNpcPos ?? committedNpcPos;
+    const canUndoNpc = npcHistory.index > 0;
+    const canRedoNpc = npcHistory.index >= 0 && npcHistory.index < npcHistory.snapshots.length - 1;
+
+    const startNpcEdit = useCallback((spawn: SpawnPoint, info: NpcInfo | null, from: { rx: number; ry: number }) => {
+        setNpcReturnTo(from);
+        setSelected(null);
+        setEditingNpc({ spawn, info });
+        setLiveNpcPos(null);
+        setNpcHistory({ snapshots: [{ x: spawn.x, y: spawn.y }], index: 0 });
+    }, []);
+    const cancelNpcEdit = useCallback(() => {
+        setEditingNpc(null);
+        setLiveNpcPos(null);
+        setNpcHistory({ snapshots: [], index: -1 });
+        if (npcReturnTo) setSelected(npcReturnTo);
+        setNpcReturnTo(null);
+    }, [npcReturnTo]);
+    const onNpcDrag = useCallback((p: { x: number; y: number }) => {
+        setLiveNpcPos(p);
+    }, []);
+    const onNpcDragEnd = useCallback((p: { x: number; y: number }) => {
+        setNpcHistory((prev) => {
+            const truncated = prev.snapshots.slice(0, prev.index + 1);
+            truncated.push(p);
+            return { snapshots: truncated, index: truncated.length - 1 };
+        });
+        setLiveNpcPos(null);
+    }, []);
+    const undoNpc = useCallback(() => {
+        setNpcHistory((prev) => {
+            if (prev.index <= 0) return prev;
+            return { ...prev, index: prev.index - 1 };
+        });
+        setLiveNpcPos(null);
+    }, []);
+    const redoNpc = useCallback(() => {
+        setNpcHistory((prev) => {
+            if (prev.index >= prev.snapshots.length - 1) return prev;
+            return { ...prev, index: prev.index + 1 };
+        });
+        setLiveNpcPos(null);
+    }, []);
+
+    const [savingNpc, setSavingNpc] = useState(false);
+    const saveNpc = useCallback(async () => {
+        if (!editingNpc || !committedNpcPos) return;
+        if (npcHistory.index <= 0) return;
+        if (!editingNpc.spawn.inlineCoords) {
+            window.alert(
+                "This NPC inherits its coordinates from its parent <spawn>'s <node> elements. Saving inherited-coord NPCs is not supported yet."
+            );
+            return;
+        }
+        setSavingNpc(true);
+        try {
+            const newX = Math.round(committedNpcPos.x);
+            const newY = Math.round(committedNpcPos.y);
+            await ipc.saveSpawnEdits([
+                {
+                    filePath: editingNpc.spawn.filePath,
+                    npcId: editingNpc.spawn.npcId,
+                    oldX: editingNpc.spawn.x,
+                    oldY: editingNpc.spawn.y,
+                    newX,
+                    newY
+                }
+            ]);
+            const saved = editingNpc.spawn;
+            setSpawnIndex((prev) => ({
+                ...prev,
+                spawns: prev.spawns.map((s) => (s === saved ? { ...s, x: newX, y: newY } : s)),
+                bosses: prev.bosses.map((b) =>
+                    b.npcId === saved.npcId && b.x === saved.x && b.y === saved.y ? { ...b, x: newX, y: newY } : b
+                )
+            }));
+            setEditingNpc(null);
+            setNpcHistory({ snapshots: [], index: -1 });
+            setLiveNpcPos(null);
+            if (npcReturnTo) setSelected(npcReturnTo);
+            setNpcReturnTo(null);
+        } catch (e) {
+            window.alert(`Save failed: ${e}`);
+        } finally {
+            setSavingNpc(false);
+        }
+    }, [editingNpc, committedNpcPos, npcHistory.index, npcReturnTo]);
+
     const [savingZone, setSavingZone] = useState(false);
     const saveZone = useCallback(async () => {
         if (!editingZone || !committedPoints) return;
@@ -176,21 +294,23 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
     }, [editingZone, committedPoints, zoneHistory.index, editReturnTo]);
 
     useEffect(() => {
-        if (!editingZone) return;
+        if (!editingZone && !editingNpc) return;
+        const undo = editingZone ? undoZone : undoNpc;
+        const redo = editingZone ? redoZone : redoNpc;
         const onKey = (e: KeyboardEvent) => {
             const meta = e.ctrlKey || e.metaKey;
             if (!meta) return;
             if (e.key === "z" && !e.shiftKey) {
                 e.preventDefault();
-                undoZone();
+                undo();
             } else if (e.key === "y" || (e.key === "z" && e.shiftKey)) {
                 e.preventDefault();
-                redoZone();
+                redo();
             }
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [editingZone, undoZone, redoZone]);
+    }, [editingZone, editingNpc, undoZone, redoZone, undoNpc, redoNpc]);
 
     const [minimap, setMinimap] = useState<MinimapSheet[] | null>(null);
     useEffect(() => {
@@ -234,26 +354,39 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
     useEffect(() => {
         if (!active) return;
         const zoneDirty = !!editingZone && zoneHistory.index > 0;
+        const npcDirty = !!editingNpc && npcHistory.index > 0;
+        const anyEditing = !!editingZone || !!editingNpc;
+        const onUndo = editingZone ? undoZone : editingNpc ? undoNpc : () => {};
+        const onRedo = editingZone ? redoZone : editingNpc ? redoNpc : () => {};
+        const onSave = editingZone ? saveZone : editingNpc ? saveNpc : () => {};
+        const dirty = zoneDirty || npcDirty;
+        const saving = savingZone || savingNpc;
+        const canUndoNow = (!!editingZone && canUndoZone) || (!!editingNpc && canUndoNpc);
+        const canRedoNow = (!!editingZone && canRedoZone) || (!!editingNpc && canRedoNpc);
         setToolbarSlot(
             <EditActions
-                onUndo={editingZone ? undoZone : () => {}}
-                onRedo={editingZone ? redoZone : () => {}}
-                canUndo={!!editingZone && canUndoZone}
-                canRedo={!!editingZone && canRedoZone}
-                onSave={editingZone ? saveZone : () => {}}
-                saving={savingZone}
-                saveDisabled={!zoneDirty || savingZone}
-                dirty={zoneDirty}
-                dirtyTitle="Zone edits pending"
+                onUndo={onUndo}
+                onRedo={onRedo}
+                canUndo={canUndoNow}
+                canRedo={canRedoNow}
+                onSave={onSave}
+                saving={saving}
+                saveDisabled={!dirty || saving}
+                dirty={dirty}
+                dirtyTitle={editingZone ? "Zone edits pending" : "Spawn edit pending"}
                 saveTitle={
                     editingZone
                         ? zoneDirty
                             ? `Write ${editingZone.name} back to ${editingZone.filePath}`
                             : "No edits to save"
-                        : "World view has no editable state yet"
+                        : editingNpc
+                          ? npcDirty
+                              ? `Write spawn back to ${editingNpc.spawn.filePath}`
+                              : "No edits to save"
+                          : "World view has no editable state yet"
                 }
                 onReload={reloadAll}
-                reloadDisabled={reloading || !!editingZone}
+                reloadDisabled={reloading || anyEditing}
             />
         );
         return () => setToolbarSlot(null);
@@ -263,13 +396,21 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
         reloadAll,
         reloading,
         editingZone,
+        editingNpc,
         undoZone,
         redoZone,
+        undoNpc,
+        redoNpc,
         canUndoZone,
         canRedoZone,
+        canUndoNpc,
+        canRedoNpc,
         saveZone,
+        saveNpc,
         savingZone,
-        zoneHistory.index
+        savingNpc,
+        zoneHistory.index,
+        npcHistory.index
     ]);
 
     const placed = useMemo(() => {
@@ -354,7 +495,7 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                         onReady={handleTileReady}
                     />
                 ))}
-                {!editingZone && (
+                {!editingZone && !editingNpc && (
                     <RegionGrid w={placed.w} h={placed.h} onSelect={(rx, ry) => setSelected({ rx, ry })} />
                 )}
                 <ZoneLayer zones={zones} enabled={enabledTypes} w={placed.w} h={placed.h} excluding={editingZone} />
@@ -370,6 +511,20 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                             h={placed.h}
                             onVertexDrag={onVertexDrag}
                             onVertexDragEnd={onVertexDragEnd}
+                        />
+                    </>
+                )}
+                {editingNpc && displayNpcPos && committedNpcPos && (
+                    <>
+                        <NpcEditFitView pos={committedNpcPos} w={placed.w} h={placed.h} />
+                        <NpcEditOverlay
+                            livePos={displayNpcPos}
+                            markerPos={committedNpcPos}
+                            isBoss={(editingNpc.info?.type ?? "").includes("Boss")}
+                            w={placed.w}
+                            h={placed.h}
+                            onDrag={onNpcDrag}
+                            onDragEnd={onNpcDragEnd}
                         />
                     </>
                 )}
@@ -391,14 +546,27 @@ function RadarMapView({ active, clientRoot, dataRoot }: { active: boolean; clien
                     canSave={zoneHistory.index > 0 && !savingZone}
                 />
             )}
+            {editingNpc && displayNpcPos && (
+                <NpcEditPanel
+                    spawn={editingNpc.spawn}
+                    info={editingNpc.info}
+                    pos={displayNpcPos}
+                    onCancel={cancelNpcEdit}
+                    onSave={saveNpc}
+                    saving={savingNpc}
+                    canSave={npcHistory.index > 0 && !savingNpc && editingNpc.spawn.inlineCoords}
+                />
+            )}
             {selected && (
                 <TileInfoModal
                     rx={selected.rx}
                     ry={selected.ry}
                     zones={zones}
+                    spawnIndex={spawnIndex}
                     placed={placed}
                     clientRoot={clientRoot}
                     onEditZone={startZoneEdit}
+                    onEditNpc={startNpcEdit}
                     onClose={() => setSelected(null)}
                 />
             )}
@@ -838,17 +1006,21 @@ function TileInfoModal({
     rx,
     ry,
     zones,
+    spawnIndex,
     placed,
     clientRoot,
     onEditZone,
+    onEditNpc,
     onClose
 }: {
     rx: number;
     ry: number;
     zones: Zone[];
+    spawnIndex: WorldSpawnIndex;
     placed: PlacedTiles;
     clientRoot: string;
     onEditZone: (z: Zone, from: { rx: number; ry: number }) => void;
+    onEditNpc: (spawn: SpawnPoint, info: NpcInfo | null, from: { rx: number; ry: number }) => void;
     onClose: () => void;
 }) {
     useEffect(() => {
@@ -882,9 +1054,19 @@ function TileInfoModal({
 
     const [tab, setTab] = useState<"zones" | "npcs">("zones");
     const zonesHere = useMemo(() => zonesInRegion(zones, rx, ry), [zones, rx, ry]);
+    const spawnsHere = useMemo(
+        () =>
+            spawnIndex.spawns.filter((s) => {
+                const r = regionOf(s.x, s.y);
+                return r.rx === rx && r.ry === ry;
+            }),
+        [spawnIndex, rx, ry]
+    );
     const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
+    const [selectedSpawn, setSelectedSpawn] = useState<SpawnPoint | null>(null);
     useEffect(() => {
         setSelectedZone(null);
+        setSelectedSpawn(null);
     }, [rx, ry]);
 
     return (
@@ -921,6 +1103,7 @@ function TileInfoModal({
                             >
                                 <RegionCrop info={regionInfo} clientRoot={clientRoot} />
                                 {selectedZone && <ZoneOverlay zone={selectedZone} rx={rx} ry={ry} />}
+                                {selectedSpawn && <SpawnOverlay spawn={selectedSpawn} rx={rx} ry={ry} />}
                             </div>
                         ) : (
                             <div className="text-[11px] text-[var(--color-text-faint)]">no tile covers this region</div>
@@ -933,6 +1116,13 @@ function TileInfoModal({
                                 onBack={() => setSelectedZone(null)}
                                 onEdit={(z) => onEditZone(z, { rx, ry })}
                             />
+                        ) : selectedSpawn ? (
+                            <NpcDetail
+                                spawn={selectedSpawn}
+                                info={spawnIndex.npcs.get(selectedSpawn.npcId) ?? null}
+                                onBack={() => setSelectedSpawn(null)}
+                                onEdit={(s, info) => onEditNpc(s, info, { rx, ry })}
+                            />
                         ) : (
                             <>
                                 <div className="flex shrink-0 border-b border-[var(--color-border)]">
@@ -943,16 +1133,21 @@ function TileInfoModal({
                                         </span>
                                     </TabButton>
                                     <TabButton active={tab === "npcs"} onClick={() => setTab("npcs")}>
-                                        NPCs
+                                        NPCs{" "}
+                                        <span className="ml-1.5 text-[var(--color-text-faint)]">
+                                            {spawnsHere.length}
+                                        </span>
                                     </TabButton>
                                 </div>
                                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
                                     {tab === "zones" ? (
                                         <ZonesList zones={zonesHere} onSelect={setSelectedZone} />
                                     ) : (
-                                        <div className="text-[11px] text-[var(--color-text-faint)]">
-                                            NPCs for this region will appear here.
-                                        </div>
+                                        <NpcsList
+                                            spawns={spawnsHere}
+                                            npcLookup={spawnIndex.npcs}
+                                            onSelect={setSelectedSpawn}
+                                        />
                                     )}
                                 </div>
                             </>
@@ -1000,6 +1195,325 @@ function zonePolygonPoints(z: Zone): Array<[number, number]> {
         return [a, [b[0], a[1]], b, [a[0], b[1]]];
     }
     return z.points;
+}
+
+function NpcsList({
+    spawns,
+    npcLookup,
+    onSelect
+}: {
+    spawns: SpawnPoint[];
+    npcLookup: Map<number, NpcInfo>;
+    onSelect: (s: SpawnPoint) => void;
+}) {
+    if (spawns.length === 0) {
+        return <div className="text-[11px] text-[var(--color-text-faint)]">No NPCs spawn in this region.</div>;
+    }
+    return (
+        <div className="flex flex-col">
+            {spawns.map((s, i) => {
+                const info = npcLookup.get(s.npcId);
+                const isBoss = (info?.type ?? "").includes("Boss");
+                const color = isBoss ? "#fbbf24" : "#7dd3fc";
+                return (
+                    <button
+                        type="button"
+                        key={`${s.filePath}:${s.npcId}:${s.x}:${s.y}:${i}`}
+                        onClick={() => onSelect(s)}
+                        title={s.inlineCoords ? undefined : "inherited coordinates — editing not supported"}
+                        className="flex items-center gap-2 border-b border-white/5 py-1.5 text-left last:border-b-0 hover:bg-white/5"
+                    >
+                        <span
+                            className={`inline-block h-2 w-2 shrink-0 ${isBoss ? "rotate-45" : "rounded-sm"}`}
+                            style={{ background: color }}
+                        />
+                        <span className="flex-1 truncate" title={info?.type ?? ""}>
+                            {info?.name || `#${s.npcId}`}
+                        </span>
+                        {info?.level ? (
+                            <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-faint)]">
+                                Lv {info.level}
+                            </span>
+                        ) : null}
+                        {!s.inlineCoords && (
+                            <span className="shrink-0 rounded bg-white/5 px-1 text-[9px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                grp
+                            </span>
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+function SpawnOverlay({ spawn, rx, ry }: { spawn: SpawnPoint; rx: number; ry: number }) {
+    const x0 = (rx - 20) * REGION_SIZE;
+    const y0 = (ry - 18) * REGION_SIZE;
+    const cx = spawn.x;
+    const cy = spawn.y;
+    return (
+        <svg
+            className="pointer-events-none absolute inset-0 h-full w-full"
+            viewBox={`${x0} ${y0} ${REGION_SIZE} ${REGION_SIZE}`}
+            preserveAspectRatio="none"
+        >
+            <circle cx={cx} cy={cy} r={REGION_SIZE * 0.012} fill="#fbbf24" fillOpacity={0.45} />
+            <circle
+                cx={cx}
+                cy={cy}
+                r={REGION_SIZE * 0.012}
+                fill="none"
+                stroke="#fbbf24"
+                strokeWidth={2}
+                vectorEffect="non-scaling-stroke"
+            />
+        </svg>
+    );
+}
+
+const NPC_HANDLE = divIcon({
+    className: "",
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    html: '<div style="width:14px;height:14px;border:2px solid #f97316;background:#fbbf24;border-radius:50%;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,0.5)"></div>'
+});
+
+function NpcEditFitView({ pos, w, h }: { pos: { x: number; y: number }; w: number; h: number }) {
+    const map = useMap();
+    useEffect(() => {
+        const prevCenter = map.getCenter();
+        const prevZoom = map.getZoom();
+        const span = REGION_SIZE / 4;
+        const a = worldToMap(pos.x - span, pos.y - span, w, h);
+        const b = worldToMap(pos.x + span, pos.y + span, w, h);
+        const bounds: LatLngBoundsExpression = [
+            [Math.min(a.lat, b.lat), Math.min(a.lng, b.lng)],
+            [Math.max(a.lat, b.lat), Math.max(a.lng, b.lng)]
+        ];
+        map.fitBounds(bounds, { padding: [80, 80], animate: true });
+        return () => {
+            map.setView(prevCenter, prevZoom, { animate: true });
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [map, w, h]);
+    return null;
+}
+
+function NpcEditOverlay({
+    livePos,
+    markerPos,
+    isBoss,
+    w,
+    h,
+    onDrag,
+    onDragEnd
+}: {
+    livePos: { x: number; y: number };
+    markerPos: { x: number; y: number };
+    isBoss: boolean;
+    w: number;
+    h: number;
+    onDrag: (p: { x: number; y: number }) => void;
+    onDragEnd: (p: { x: number; y: number }) => void;
+}) {
+    const liveLatLng = useMemo(() => {
+        const m = worldToMap(livePos.x, livePos.y, w, h);
+        return [m.lat, m.lng] as [number, number];
+    }, [livePos, w, h]);
+    const markerLatLng = useMemo(() => {
+        const m = worldToMap(markerPos.x, markerPos.y, w, h);
+        return [m.lat, m.lng] as [number, number];
+    }, [markerPos, w, h]);
+    const fill = isBoss ? "#f87171" : "#fbbf24";
+    return (
+        <>
+            <CircleMarker
+                center={liveLatLng}
+                radius={6}
+                pathOptions={{
+                    color: "#f97316",
+                    weight: 2,
+                    opacity: 1,
+                    fillColor: fill,
+                    fillOpacity: 0.55
+                }}
+            />
+            <Marker
+                position={markerLatLng}
+                draggable
+                icon={NPC_HANDLE}
+                eventHandlers={{
+                    drag: (e) => {
+                        const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
+                        const wp = mapToWorld(ll.lat, ll.lng, w, h);
+                        onDrag({ x: wp.x, y: wp.y });
+                    },
+                    dragend: (e) => {
+                        const ll = (e.target as { getLatLng(): { lat: number; lng: number } }).getLatLng();
+                        const wp = mapToWorld(ll.lat, ll.lng, w, h);
+                        onDragEnd({ x: wp.x, y: wp.y });
+                    }
+                }}
+            />
+        </>
+    );
+}
+
+function NpcEditPanel({
+    spawn,
+    info,
+    pos,
+    onCancel,
+    onSave,
+    saving,
+    canSave
+}: {
+    spawn: SpawnPoint;
+    info: NpcInfo | null;
+    pos: { x: number; y: number };
+    onCancel: () => void;
+    onSave: () => void;
+    saving: boolean;
+    canSave: boolean;
+}) {
+    const isBoss = (info?.type ?? "").includes("Boss");
+    const color = isBoss ? "#f87171" : "#fbbf24";
+    const name = info?.name || `#${spawn.npcId}`;
+    return (
+        <div className="absolute left-2 top-[88px] z-[1000] flex max-h-[calc(100%-6rem)] w-60 flex-col rounded border border-[var(--color-border)] bg-black/85 text-[10px] text-white/85 shadow">
+            <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-2 py-1.5">
+                <span
+                    className={`inline-block h-2 w-2 shrink-0 ${isBoss ? "rotate-45" : "rounded-sm"}`}
+                    style={{ background: color }}
+                />
+                <span className="flex-1 truncate font-mono text-[11px] text-white" title={name}>
+                    {name}
+                </span>
+            </div>
+            <div className="flex flex-col gap-1 px-2 py-2 font-mono">
+                <KvRow label="npc id" value={String(spawn.npcId)} />
+                {info?.level ? <KvRow label="level" value={String(info.level)} /> : null}
+                {info?.type ? <KvRow label="type" value={info.type} /> : null}
+                <KvRow label="X" value={String(Math.round(pos.x))} />
+                <KvRow label="Y" value={String(Math.round(pos.y))} />
+                {spawn.respawn ? <KvRow label="respawn" value={spawn.respawn} /> : null}
+                {!spawn.inlineCoords && (
+                    <div className="mt-1 rounded bg-white/5 px-1.5 py-1 text-[10px] leading-snug text-white/70">
+                        Inherits coords from parent &lt;spawn&gt;'s &lt;node&gt; group. Saving inherited-coord NPCs
+                        isn't supported yet.
+                    </div>
+                )}
+            </div>
+            <div className="flex shrink-0 gap-1 border-t border-white/10 p-2">
+                <button
+                    type="button"
+                    onClick={onSave}
+                    disabled={!canSave}
+                    title={
+                        canSave
+                            ? `Write spawn back to ${spawn.filePath}`
+                            : spawn.inlineCoords
+                              ? "No edits to save"
+                              : "Inherited coords aren't editable"
+                    }
+                    className={`flex-1 rounded border px-2 py-1 text-[11px] disabled:opacity-40 ${
+                        canSave
+                            ? "border-[var(--color-accent-2)] bg-[var(--color-surface-2)] text-[var(--color-accent)]"
+                            : "border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent-2)]"
+                    }`}
+                >
+                    {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={saving}
+                    className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px] hover:border-[var(--color-accent-2)] disabled:opacity-40"
+                >
+                    Cancel
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function KvRow({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="flex justify-between gap-2 text-[11px]">
+            <span className="shrink-0 text-white/45">{label}</span>
+            <span className="break-all text-right text-white/90">{value}</span>
+        </div>
+    );
+}
+
+function NpcDetail({
+    spawn,
+    info,
+    onBack,
+    onEdit
+}: {
+    spawn: SpawnPoint;
+    info: NpcInfo | null;
+    onBack: () => void;
+    onEdit: (s: SpawnPoint, info: NpcInfo | null) => void;
+}) {
+    const isBoss = (info?.type ?? "").includes("Boss");
+    const color = isBoss ? "#f87171" : "#fbbf24";
+    const name = info?.name || `#${spawn.npcId}`;
+    const rows: Array<[string, string]> = [
+        ["npc id", String(spawn.npcId)],
+        ["type", info?.type || "—"],
+        ["level", info?.level ? String(info.level) : "—"],
+        ["X", String(spawn.x)],
+        ["Y", String(spawn.y)],
+        ["count", String(spawn.count)],
+        ["respawn", spawn.respawn || "—"],
+        ["coord mode", spawn.inlineCoords ? "inline" : "inherited (group)"]
+    ];
+    return (
+        <div className="flex h-full flex-col">
+            <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-5 py-2">
+                <button
+                    type="button"
+                    onClick={onBack}
+                    className="rounded px-1.5 py-0.5 text-[11px] text-[var(--color-text-faint)] hover:bg-white/10 hover:text-[var(--color-text)]"
+                >
+                    ← back
+                </button>
+                <span
+                    className={`ml-1 inline-block h-2 w-2 shrink-0 ${isBoss ? "rotate-45" : "rounded-sm"}`}
+                    style={{ background: color }}
+                />
+                <span className="truncate font-mono text-[12px] text-[var(--color-text)]" title={name}>
+                    {name}
+                </span>
+                <button
+                    type="button"
+                    onClick={() => onEdit(spawn, info)}
+                    disabled={!spawn.inlineCoords}
+                    title={
+                        spawn.inlineCoords
+                            ? "Drag this NPC's position on the world map"
+                            : "Inherited-coord NPCs aren't editable yet"
+                    }
+                    className="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] hover:border-[var(--color-accent-2)] disabled:opacity-40"
+                >
+                    <Pencil size={11} aria-hidden /> Edit
+                </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-[12px] text-[var(--color-text)]">
+                <div className="flex flex-col gap-1 font-mono text-[11px]">
+                    {rows.map(([k, v], i) => (
+                        <div key={`${k}:${i}`} className="flex justify-between gap-3">
+                            <span className="shrink-0 text-[var(--color-text-faint)]">{k}</span>
+                            <span className="break-all text-right">{v}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
 }
 
 function ZoneOverlay({ zone, rx, ry }: { zone: Zone; rx: number; ry: number }) {

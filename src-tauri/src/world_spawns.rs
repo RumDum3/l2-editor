@@ -23,6 +23,8 @@ pub struct SpawnPoint {
     pub y: i32,
     pub count: u32,
     pub respawn: String,
+    pub file_path: String,
+    pub inline_coords: bool,
 }
 
 #[derive(Serialize)]
@@ -128,10 +130,10 @@ fn parse_spawn_file(path: &Path) -> Vec<SpawnPoint> {
                 }
                 b"npc" => {
                     if let Some(id) = attr(e, b"id").and_then(|s| s.trim().parse::<u32>().ok()) {
-                        let pos = match (iattr(e, b"x"), iattr(e, b"y")) {
-                            (Some(x), Some(y)) => Some((x, y)),
-                            _ if tn > 0 => Some(((tsx / tn) as i32, (tsy / tn) as i32)),
-                            _ => None,
+                        let (pos, inline) = match (iattr(e, b"x"), iattr(e, b"y")) {
+                            (Some(x), Some(y)) => (Some((x, y)), true),
+                            _ if tn > 0 => (Some(((tsx / tn) as i32, (tsy / tn) as i32)), false),
+                            _ => (None, false),
                         };
                         if let Some((x, y)) = pos {
                             out.push(SpawnPoint {
@@ -140,6 +142,8 @@ fn parse_spawn_file(path: &Path) -> Vec<SpawnPoint> {
                                 y,
                                 count: attr(e, b"count").and_then(|s| s.trim().parse().ok()).unwrap_or(1),
                                 respawn: attr(e, b"respawnTime").unwrap_or_default(),
+                                file_path: path.to_string_lossy().into_owned(),
+                                inline_coords: inline,
                             });
                         }
                     }

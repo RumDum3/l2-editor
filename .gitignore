@@ -15,6 +15,10 @@ release-portable/
 tauri-build.log
 *.local
 
+# Atomic-write / backup stragglers
+*.tmp
+*.bak
+
 # Rust / Cargo
 target/
 src-tauri/target/

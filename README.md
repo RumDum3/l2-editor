@@ -44,6 +44,40 @@ pnpm tauri build    # produce a release binary
 
 Point the app at your L2 client and server data folders in Settings. Open the **World** tab to start exploring.
 
+## Cutting a release
+
+Patch notes are kept in [CHANGELOG.md](./CHANGELOG.md) under an `[Unreleased]` heading. Add an entry as you finish work:
+
+```bash
+pnpm note added   "world: tile click opens region info modal"
+pnpm note fixed   "zone polygon no longer flickers on zoom"
+pnpm note changed "save button glows when there is something to save"
+```
+
+When you are ready to ship:
+
+```bash
+pnpm release 0.2.0
+```
+
+That single command bumps `package.json` / `Cargo.toml` / `tauri.conf.json` to the new version, moves the contents of `[Unreleased]` into a new dated section, runs `pnpm tauri build`, stages the portable folder, zips it, and prints the SHA-256 plus the suggested `git tag` / `gh release create` commands. Output lands in `release-portable/L2_Editor_<ver>_portable.zip`. Installers (MSI + NSIS) are also produced under `target/release/bundle/`.
+
+### Publishing via GitHub Actions
+
+When you push a `v*` tag, [`.github/workflows/release.yml`](./.github/workflows/release.yml) runs automatically: it re-builds in a clean Windows runner, zips the portable, extracts the matching `CHANGELOG.md` section, and creates a **draft** GitHub release with the MSI + NSIS installer + portable zip attached. You review the draft on GitHub and click Publish.
+
+Full flow:
+
+```bash
+pnpm release 0.2.0          # bump + local build + zip
+git add -A
+git commit -m "release v0.2.0"
+git tag -a v0.2.0 -m "v0.2.0"
+git push && git push --tags # CI takes over, attaches artifacts
+```
+
+The CI workflow verifies the pushed tag matches `package.json`'s version (catches forgetting to bump). You can also re-run the workflow manually from the Actions tab with `workflow_dispatch` if a build needs to be redone.
+
 ## Credits
 
 Built on top of years of community reverse-engineering. Special thanks to:

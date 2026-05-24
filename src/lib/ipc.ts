@@ -74,7 +74,10 @@ export const ipc = {
     saveDat: (path: string, record: unknown, meta?: DatMeta) =>
         invoke<DatSaveResult>("save_dat", { path, record, meta }),
     saveZoneEdits: (edits: Array<{ filePath: string; zoneName: string; points: Array<[number, number]> }>) =>
-        invoke<number>("save_zone_edits", { edits })
+        invoke<number>("save_zone_edits", { edits }),
+    saveSpawnEdits: (
+        edits: Array<{ filePath: string; npcId: number; oldX: number; oldY: number; newX: number; newY: number }>
+    ) => invoke<number>("save_spawn_edits", { edits })
 };
 
 export type SkillnameRow = {
@@ -113,6 +116,8 @@ export type SpawnPoint = {
     y: number;
     count: number;
     respawn: string;
+    filePath: string;
+    inlineCoords: boolean;
 };
 
 export type WorldSpawns = {

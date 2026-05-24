@@ -5,6 +5,7 @@ pub mod generic_dat;
 pub mod l2_probe;
 pub mod skill_name;
 pub mod skillgrp;
+pub mod spawns;
 pub mod textures;
 pub mod xml;
 pub mod zones;
