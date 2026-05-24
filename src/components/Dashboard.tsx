@@ -6,12 +6,14 @@ export function Dashboard({
     onOpenSettings,
     onShowClasses,
     onShowExperience,
-    onShowWorld
+    onShowWorld,
+    onShowNpcs
 }: {
     onOpenSettings: () => void;
     onShowClasses: () => void;
     onShowExperience: () => void;
     onShowWorld: () => void;
+    onShowNpcs: () => void;
 }) {
     const { config } = useSettings();
     const { selectCategory } = useEditor();
@@ -68,6 +70,14 @@ export function Dashboard({
                     >
                         <div className="text-[14px] font-semibold text-[var(--color-text)]">World</div>
                         <span className="mono text-[10px] text-[var(--color-text-faint)]">—</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onShowNpcs}
+                        className="flex h-32 flex-col items-start justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-left transition hover:border-[var(--color-accent-2)] hover:bg-[var(--color-surface-2)]"
+                    >
+                        <div className="text-[14px] font-semibold text-[var(--color-text)]">NPCs</div>
+                        <span className="mono text-[10px] text-[var(--color-text-faint)]">stats/npcs</span>
                     </button>
                     {categories.map((p) => (
                         <button

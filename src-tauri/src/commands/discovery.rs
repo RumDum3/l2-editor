@@ -24,6 +24,7 @@ const TIER2_PATTERNS: &[(&str, &str)] = &[
     ("class_initial_stat", "characterinitialstatexdata"),
     ("minimap_region", "minimapregion"),
     ("hunting_zone", "huntingzone"),
+    ("npc_name", "npcname"),
 ];
 
 #[tauri::command]

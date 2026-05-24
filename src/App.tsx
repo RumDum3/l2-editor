@@ -136,6 +136,7 @@ function Inner() {
                 onShowClasses={showClasses}
                 onShowExperience={showExperience}
                 onShowWorld={showWorld}
+                onShowNpcs={showNpcs}
             />
         );
     })();

@@ -10,7 +10,7 @@ export type Tier2DatEntry = {
     indexField?: string;
     chronicle?: DatChronicle;
 
-    appliesTo?: "skill" | "class" | "world";
+    appliesTo?: "skill" | "class" | "world" | "npc";
 };
 
 export const TIER2_DATS: Tier2DatEntry[] = [
@@ -139,6 +139,18 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "id",
         appliesTo: "world",
+        chronicle: "any"
+    },
+    {
+        key: "npc_name",
+        label: "NPC names (client)",
+        description:
+            "Client-side display names and titles per NPC id (NpcName-*.dat). Surfaces in the NPCs workspace; mismatches with the server are flagged.",
+        schemaName: "npcname",
+        pickerTitle: "Pick NpcName-<lang>.dat (under <client>/system/)",
+        defaultSubfolder: "system",
+        indexField: "id",
+        appliesTo: "npc",
         chronicle: "any"
     }
 ];

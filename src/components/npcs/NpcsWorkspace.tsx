@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { type ClientNpc, loadClientNpcs } from "../../lib/clientNpcs";
 import type { NpcInfo, SpawnPoint } from "../../lib/ipc";
 import { EMPTY_SPAWN_INDEX, loadWorldSpawns, type WorldSpawnIndex } from "../../lib/spawns";
 import { regionOf } from "../../lib/worldCoords";
@@ -6,11 +7,32 @@ import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
 import { EditActions } from "../EditActions";
 
+function normalizeName(s: string): string {
+    const INVISIBLE = /[   　​]/g;
+    return s.replace(INVISIBLE, " ").replace(/\s+/g, " ").trim().normalize("NFC");
+}
+
+function codepoints(s: string): string {
+    return [...s].map((ch) => ch.codePointAt(0)?.toString(16).padStart(4, "0") ?? "").join(" ");
+}
+
+interface DriftDetail {
+    id: number;
+    serverName: string;
+    clientName: string | null;
+    clientNick: string;
+    nameMismatch: boolean;
+    missingInClient: boolean;
+}
+
 interface NpcRow {
     info: NpcInfo;
     ids: number[];
     spawnCount: number;
     bossCount: number;
+    clients: Map<number, ClientNpc>;
+    drift: DriftDetail[];
+    hasDrift: boolean;
 }
 
 export function NpcsWorkspace({ active }: { active: boolean }) {
@@ -19,13 +41,15 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
 
     const [index, setIndex] = useState<WorldSpawnIndex>(EMPTY_SPAWN_INDEX);
     const [loading, setLoading] = useState(false);
+    const [clientNpcs, setClientNpcs] = useState<Map<number, ClientNpc>>(() => new Map());
 
     const load = async () => {
         if (!dataRoot) return;
         setLoading(true);
         try {
-            const idx = await loadWorldSpawns(dataRoot);
+            const [idx, client] = await Promise.all([loadWorldSpawns(dataRoot), loadClientNpcs()]);
             setIndex(idx);
+            setClientNpcs(client);
         } finally {
             setLoading(false);
         }
@@ -78,15 +102,53 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
                 existing.spawnCount += sc;
                 existing.bossCount += bc;
             } else {
-                groups.set(key, { info, ids: [info.id], spawnCount: sc, bossCount: bc });
+                groups.set(key, {
+                    info,
+                    ids: [info.id],
+                    spawnCount: sc,
+                    bossCount: bc,
+                    clients: new Map(),
+                    drift: [],
+                    hasDrift: false
+                });
             }
         }
+        const hasClient = clientNpcs.size > 0;
+        for (const row of groups.values()) {
+            for (const id of row.ids) {
+                const c = clientNpcs.get(id);
+                if (c) row.clients.set(id, c);
+                if (!hasClient) continue;
+                const serverName = row.info.name ?? "";
+                if (!c) {
+                    row.drift.push({
+                        id,
+                        serverName,
+                        clientName: null,
+                        clientNick: "",
+                        nameMismatch: false,
+                        missingInClient: true
+                    });
+                } else if (serverName && c.name && normalizeName(serverName) !== normalizeName(c.name)) {
+                    row.drift.push({
+                        id,
+                        serverName,
+                        clientName: c.name,
+                        clientNick: c.nick,
+                        nameMismatch: true,
+                        missingInClient: false
+                    });
+                }
+            }
+            row.hasDrift = row.drift.length > 0;
+        }
         return [...groups.values()].sort((a, b) => a.info.id - b.info.id);
-    }, [index]);
+    }, [index, clientNpcs]);
 
     const [query, setQuery] = useState("");
     const [typeFilter, setTypeFilter] = useState<string>("");
     const [selectedId, setSelectedId] = useState<number | null>(null);
+    const clientLoaded = clientNpcs.size > 0;
 
     const types = useMemo(() => {
         const set = new Set<string>();
@@ -155,6 +217,14 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
                             {filtered.length} / {rows.length}
                         </span>
                     </div>
+                    {!clientLoaded && (
+                        <div
+                            className="text-[10px] text-[var(--color-text-faint)]"
+                            title="Set the client folder in Settings (and have NpcName-*.dat present) to enable drift checking."
+                        >
+                            client NPC data not loaded — drift check disabled
+                        </div>
+                    )}
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     {filtered.map((r) => {
@@ -187,6 +257,15 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
                                 >
                                     {r.info.name || "(unnamed)"}
                                 </span>
+                                {r.hasDrift && (
+                                    <span
+                                        className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-1.5 py-0.5 text-[10px] text-[var(--color-warning)]"
+                                        title={driftTitle(r)}
+                                    >
+                                        <span className="font-bold leading-none">!</span>
+                                        <span className="font-mono">{driftSummary(r)}</span>
+                                    </span>
+                                )}
                                 {r.ids.length > 1 && (
                                     <span
                                         className="shrink-0 rounded bg-white/5 px-1 font-mono text-[10px] text-[var(--color-text-faint)]"
@@ -221,6 +300,25 @@ export function NpcsWorkspace({ active }: { active: boolean }) {
             </div>
         </div>
     );
+}
+
+function driftSummary(row: NpcRow): string {
+    const d = row.drift[0];
+    if (!d) return "";
+    if (d.missingInClient) return `missing in client${row.drift.length > 1 ? ` +${row.drift.length - 1}` : ""}`;
+    const client = d.clientName || "(empty)";
+    const more = row.drift.length > 1 ? ` +${row.drift.length - 1}` : "";
+    return `client: ${client}${more}`;
+}
+
+function driftTitle(row: NpcRow): string {
+    const lines = [`${row.drift.length} of ${row.ids.length} id(s) disagree with client:`];
+    for (const d of row.drift.slice(0, 4)) {
+        if (d.missingInClient) lines.push(`  #${d.id}: missing in client NpcName`);
+        else lines.push(`  #${d.id}: server "${d.serverName}" / client "${d.clientName ?? ""}"`);
+    }
+    if (row.drift.length > 4) lines.push(`  … and ${row.drift.length - 4} more`);
+    return lines.join("\n");
 }
 
 function NpcDetailView({
@@ -262,6 +360,87 @@ function NpcDetailView({
                     <span className="font-mono text-[11px] text-[var(--color-text-faint)]">Lv {row.info.level}</span>
                 )}
             </header>
+
+            {row.hasDrift && (
+                <section className="rounded border border-[var(--color-warning)] bg-[var(--color-warning)]/5 px-3 py-2">
+                    <div className="mb-1 flex items-center gap-2">
+                        <span className="font-mono text-[12px] font-bold text-[var(--color-warning)]">!</span>
+                        <h3 className="text-[10px] uppercase tracking-[0.15em] text-[var(--color-warning)]">
+                            client out of sync with server
+                        </h3>
+                    </div>
+                    <p className="mb-2 text-[11px] text-[var(--color-text-faint)]">
+                        Client NpcName.dat disagrees with the server for the id{row.drift.length === 1 ? "" : "s"}{" "}
+                        below.
+                    </p>
+                    <div className="flex flex-col gap-2 font-mono text-[11px]">
+                        {row.drift.map((d) => (
+                            <div key={d.id} className="flex flex-col gap-0.5 border-t border-white/5 pt-1.5">
+                                <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-faint)]">
+                                    <span>#{d.id}</span>
+                                    <span>·</span>
+                                    <span>field: name</span>
+                                </div>
+                                <div className="flex items-baseline gap-2">
+                                    <span className="w-12 shrink-0 text-[9px] uppercase tracking-wider text-[var(--color-accent-2)]">
+                                        server
+                                    </span>
+                                    <span
+                                        className="truncate"
+                                        title={`${d.serverName}\nlen ${d.serverName.length}\nU+ ${codepoints(d.serverName)}`}
+                                    >
+                                        {d.serverName || "(empty)"}
+                                    </span>
+                                </div>
+                                <div className="flex items-baseline gap-2">
+                                    <span className="w-12 shrink-0 text-[9px] uppercase tracking-wider text-[var(--color-warning)]">
+                                        client
+                                    </span>
+                                    {d.missingInClient ? (
+                                        <span className="text-[var(--color-warning)]">
+                                            (row missing — client has no entry for this id)
+                                        </span>
+                                    ) : (
+                                        <>
+                                            <span
+                                                className="truncate text-[var(--color-warning)]"
+                                                title={`${d.clientName ?? ""}\nlen ${(d.clientName ?? "").length}\nU+ ${codepoints(d.clientName ?? "")}`}
+                                            >
+                                                {d.clientName || "(empty)"}
+                                            </span>
+                                            {d.clientNick && (
+                                                <span
+                                                    className="shrink-0 text-[10px] text-[var(--color-text-faint)]"
+                                                    title="client nickname / title"
+                                                >
+                                                    «{d.clientNick}»
+                                                </span>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            {row.clients.size > 0 && !row.hasDrift && (
+                <section>
+                    <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
+                        client (NpcName.dat)
+                    </h3>
+                    <div className="flex flex-col gap-1 font-mono text-[11px]">
+                        {[...row.clients.values()].map((c) => (
+                            <KvRow
+                                key={c.id}
+                                k={`#${c.id}`}
+                                v={c.nick ? `${c.name} «${c.nick}»` : c.name || "(empty)"}
+                            />
+                        ))}
+                    </div>
+                </section>
+            )}
 
             <section>
                 <h3 className="mb-1.5 text-[9px] uppercase tracking-[0.15em] text-[var(--color-text-faint)]">
