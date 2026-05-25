@@ -1,6 +1,7 @@
 pub mod config;
 pub mod dat;
 pub mod discovery;
+pub mod chronicle;
 pub mod generic_dat;
 pub mod l2_probe;
 pub mod model;

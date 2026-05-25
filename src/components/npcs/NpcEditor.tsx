@@ -17,6 +17,7 @@ import { regionOf } from "../../lib/worldCoords";
 import { useSettings } from "../../state/SettingsContext";
 import { SkillInspectorProvider, useInspectSkill } from "../classes/SkillInspector";
 import { NpcModelViewport } from "./NpcModelViewport";
+import { CHRONICLE } from "../../lib/tier2Dats";
 
 interface Props {
     npcId: number;
@@ -45,6 +46,11 @@ type Tab =
     | "collision"
     | "misc"
     | "spawns";
+
+const TAB_MIN_CHRONICLE: Partial<Record<Tab, number>> = {
+    fakePlayer: CHRONICLE.SALVATION,
+    parameters: CHRONICLE.HELIOS
+};
 
 const TABS: { id: Tab; label: string }[] = [
     { id: "identity", label: "Identity" },
@@ -84,6 +90,7 @@ function NpcEditorInner({
     onDirtyChange,
     skillCatalog
 }: Props & { skillCatalog: Map<number, SkillBrief> | null }) {
+    const { chronicle } = useSettings();
     const [doc, setDoc] = useState<Document | null>(null);
     const [npcEl, setNpcEl] = useState<Element | null>(null);
     const [tab, setTab] = useState<Tab>("identity");
@@ -257,32 +264,64 @@ function NpcEditorInner({
                 )}
             </div>
             <div className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2">
-                {TABS.map((t) => (
-                    <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setTab(t.id)}
-                        className={`shrink-0 border-b-2 px-3 py-1.5 text-[11px] ${
-                            tab === t.id
-                                ? "border-[var(--color-accent-2)] text-[var(--color-accent)]"
-                                : "border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-                        }`}
-                    >
-                        {t.label}
-                    </button>
-                ))}
+                {TABS.map((t) => {
+                    const min = TAB_MIN_CHRONICLE[t.id];
+                    const unavailable =
+                        min != null && chronicle != null && chronicle.ordinal < min;
+                    return (
+                        <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setTab(t.id)}
+                            title={
+                                unavailable
+                                    ? `Only available in chronicles newer than the current one`
+                                    : t.label
+                            }
+                            className={`shrink-0 border-b-2 px-3 py-1.5 text-[11px] ${
+                                tab === t.id
+                                    ? "border-[var(--color-accent-2)] text-[var(--color-accent)]"
+                                    : unavailable
+                                      ? "border-transparent text-[var(--color-text-faint)] opacity-40 hover:opacity-60"
+                                      : "border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                            }`}
+                        >
+                            {t.label}
+                        </button>
+                    );
+                })}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 text-[12px]">
-                <TabBody
-                    tab={tab}
-                    npc={npcEl}
-                    npcId={npcId}
-                    mutate={mutate}
-                    revision={revision}
-                    spawns={spawns}
-                    bosses={bosses}
-                    skillCatalog={skillCatalog}
-                />
+                {(() => {
+                    const min = TAB_MIN_CHRONICLE[tab];
+                    if (min != null && chronicle != null && chronicle.ordinal < min) {
+                        return (
+                            <div className="flex h-full items-center justify-center p-8 text-center text-[12px] text-[var(--color-text-faint)]">
+                                <div>
+                                    <div className="mb-1 text-[10px] uppercase tracking-[0.25em]">
+                                        Not available in {chronicle.label}
+                                    </div>
+                                    <div>
+                                        This section was introduced in a later chronicle. Switch chronicle in
+                                        Settings to enable it.
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+                    return (
+                        <TabBody
+                            tab={tab}
+                            npc={npcEl}
+                            npcId={npcId}
+                            mutate={mutate}
+                            revision={revision}
+                            spawns={spawns}
+                            bosses={bosses}
+                            skillCatalog={skillCatalog}
+                        />
+                    );
+                })()}
             </div>
         </div>
     );
@@ -379,7 +418,6 @@ function ModelTab({ npcId }: { npcId: number }) {
                 const r = await ipc.resolveNpcModel(clientRoot, mn);
                 if (cancelled) return;
                 setResolved(r);
-                // Eagerly decode the mesh so the viewport has something to draw.
                 if (r.status === "ok") {
                     try {
                         const m = await ipc.loadSkeletalMesh(clientRoot, mn);
@@ -652,7 +690,6 @@ function ResolvedModelPanel({
     };
     const dumpAfterPositions = async () => {
         if (!mesh) return;
-        // 8 byte header (version + count) + vertex_count × 6 bytes
         const offset = 8 + (mesh.positions.length / 3) * 6;
         await dumpPayloadAt(offset, 1024);
     };
@@ -2149,8 +2186,6 @@ function MiscTab({ npc, mutate }: TabProps) {
     );
 }
 
-// ─── primitive widgets ────────────────────────────────────────────────────────
-
 const INP =
     "rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px] text-[var(--color-text)] focus:border-[var(--color-accent-2)] focus:outline-none";
 const ADD_BTN =
@@ -2503,8 +2538,6 @@ function Placeholder({ children }: { children: React.ReactNode }) {
     );
 }
 
-// ─── dom helpers ──────────────────────────────────────────────────────────────
-
 function childEl(parent: Element, tag: string): Element | null {
     for (const c of parent.children) {
         if (c.tagName === tag) return c;
@@ -2545,13 +2578,11 @@ function parseNpcSnapshot(xml: string, doc: Document): Element | null {
 }
 
 function formatNpc(el: Element): string {
-    // Re-serialize then pretty-print with tab indentation matching the L2J XML files.
     const raw = new XMLSerializer().serializeToString(el);
     return prettyPrint(raw);
 }
 
 function prettyPrint(xml: string): string {
-    // Lightweight pretty printer: tab-indent, one element per line.
     const tokens = xml.replace(/>\s+</g, "><").replace(/></g, ">\n<").split("\n");
     let depth = 0;
     const out: string[] = [];

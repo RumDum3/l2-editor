@@ -1,20 +1,3 @@
-//! UE2 package parser (Lineage 2 variant).
-//!
-//! A UE2 package — extension `.u`, `.ukx`, `.utx`, `.usx`, `.unr`, `.uax` —
-//! is a single file containing a header, a name table, an import table, an
-//! export table, and a blob of object data the exports point into.
-//!
-//! Lineage 2 packages are encrypted with the same Lineage2Ver cipher
-//! `dat_engine` already handles; we decrypt first and parse the plaintext.
-//!
-//! References (all consulted, none copied):
-//!   - UE Viewer (Gildor) `Unreal/UnrealPackage/UnPackage2.cpp`
-//!   - l2mapper `src/L2Lib/UPackage.cpp`
-//!   - the long-standing community spec on the UE2 file format
-//!
-//! Scope of phase 1: just the header + the three tables. No object body
-//! deserialization yet — that comes in phase 2 with USkeletalMesh.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -33,8 +16,6 @@ pub enum PackageError {
     BadMagic(u32),
     UnsupportedVersion(u16),
     IndexOutOfRange { table: &'static str, index: i32, len: usize },
-    /// Stage-tagged failure: which step + cursor position + remaining bytes.
-    /// Replaces a bare CursorError so the dev probe can tell us where to look.
     Stage {
         stage: &'static str,
         cursor: usize,
@@ -85,8 +66,6 @@ impl From<CursorError> for PackageError {
     }
 }
 
-/// Parsed package header. Fields we don't use right now are kept around so
-/// downstream phases (mesh decoder) can pick them up without re-parsing.
 #[derive(Debug, Clone, Serialize)]
 pub struct PackageHeader {
     pub version: u16,
@@ -98,13 +77,9 @@ pub struct PackageHeader {
     pub export_offset: u32,
     pub import_count: u32,
     pub import_offset: u32,
-    /// Some L2 packages carry a "heritage" table after imports — we skip it.
     pub guid: [u8; 16],
 }
 
-/// A single entry in the export table. We collapse a few "stream offset"
-/// fields into a single span (`serial_offset`, `serial_size`) which is what
-/// the mesh decoder will need.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportEntry {
@@ -115,12 +90,8 @@ pub struct ExportEntry {
     pub object_flags: u32,
     pub serial_size: u32,
     pub serial_offset: u32,
-    /// Resolved object name, e.g. "Spider01".
     pub object_name: String,
-    /// Resolved class name via class_index, e.g. "SkeletalMesh".
-    /// "Class" itself when class_index == 0.
     pub class_name: String,
-    /// Dotted path including parent groups, e.g. "Mob.Spider01".
     pub full_name: String,
 }
 
@@ -137,8 +108,6 @@ pub struct ImportEntry {
     pub full_name: String,
 }
 
-/// A package after parse. Owns the decrypted bytes so callers can rewind into
-/// the object body for individual exports later.
 pub struct Package {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
@@ -149,7 +118,6 @@ pub struct Package {
     pub exports: Vec<ExportEntry>,
 }
 
-/// Compact summary for IPC / UI display — no raw bytes.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageSummary {
@@ -160,12 +128,8 @@ pub struct PackageSummary {
     pub name_count: usize,
     pub import_count: usize,
     pub export_count: usize,
-    /// First N export entries for quick verification.
     pub exports_sample: Vec<ExportEntry>,
-    /// First N imports too — useful to see what packages this one depends on.
     pub imports_sample: Vec<ImportEntry>,
-    /// Distinct class names that appear in the export table, with counts.
-    /// Tells you at a glance "this package has 47 SkeletalMesh, 12 Material…"
     pub export_class_histogram: Vec<(String, usize)>,
 }
 
@@ -183,10 +147,6 @@ impl Package {
             .unwrap_or("")
             .to_string();
 
-        // L2 packages are encrypted; dat_engine returns plaintext for any
-        // supported cipher. If the file isn't a Lineage2Ver* file (some test
-        // packages and UEViewer extracts are stored decrypted) fall back to
-        // treating the raw bytes as plaintext.
         let (cipher_code, plaintext) = match cipher::decrypt(raw, &file_name) {
             Ok(p) => p,
             Err(CipherError::NotL2File) => (0, raw.to_vec()),
@@ -237,18 +197,12 @@ impl Package {
         }
     }
 
-    /// Look up an export by its dotted full name (e.g. "Mob.Spider01" or
-    /// just "Spider01" if it lives at the package root).
     pub fn find_export(&self, name: &str) -> Option<&ExportEntry> {
         self.exports.iter().find(|e| e.full_name == name || e.object_name == name)
     }
 }
 
 fn stage(stage: &'static str, bytes: &[u8], anchor: usize, e: PackageError) -> PackageError {
-    // Anchor is where we *expected* to be in the buffer for this stage (e.g.
-    // header.name_offset for the name-table stage). For Cursor errors we
-    // don't know exactly how far the cursor got inside the table reader, so
-    // we surface both the anchor and a hexdump of the bytes near it.
     let detail = match &e {
         PackageError::Cursor(c) => c.to_string(),
         PackageError::IndexOutOfRange { table, index, len } => {
@@ -281,11 +235,6 @@ fn parse_header(bytes: &[u8]) -> Result<PackageHeader, PackageError> {
     let version = c.read_u16()?;
     let licensee_version = c.read_u16()?;
     if !(60..=150).contains(&version) {
-        // UE2-era L2 packages cluster between ~v76 (old chronicles) and v133+
-        // (Salvation / Helios / Superion). Anything outside this window is
-        // either a UE1 package or a UE3 package — neither of which this
-        // crate handles. The guard exists to give a clear error rather than
-        // wander off into garbage when handed the wrong file.
         return Err(PackageError::UnsupportedVersion(version));
     }
 
@@ -297,9 +246,6 @@ fn parse_header(bytes: &[u8]) -> Result<PackageHeader, PackageError> {
     let import_count = c.read_u32()?;
     let import_offset = c.read_u32()?;
 
-    // Sanity: counts must fit inside the file and offsets must point inside
-    // it. If any of these explode we've drifted before the table reads even
-    // start — much easier to diagnose here than from a downstream EOF.
     let total = bytes.len();
     for (label, off) in [
         ("name_offset", name_offset),
@@ -321,17 +267,13 @@ fn parse_header(bytes: &[u8]) -> Result<PackageHeader, PackageError> {
     if version >= 68 {
         let g = c.read_bytes(16)?;
         guid.copy_from_slice(g);
-        // Generations table. L2 (v100+) uses 12 bytes per gen (export, name,
-        // netobject); stock UE2 uses 8.
+        // L2 v100+ uses 12 bytes per generation entry, stock UE2 uses 8.
         let gen_count = c.read_u32()?;
         let gen_size = if version >= 100 { 12 } else { 8 };
         c.skip(gen_count as usize * gen_size)?;
     }
 
-    // Late L2 chronicles append a single extra i32 between the generations
-    // table and the start of the name table. UEViewer guards this on
-    // `LicenseeVer >= 0x1C` (== 28). Verify by sanity-checking the cursor
-    // against the expected name_offset.
+    // Late L2 chronicles append an extra i32 between generations and the name table.
     if licensee_version >= 0x1C && (c.position() as u32) + 4 == name_offset {
         c.skip(4)?;
     }
@@ -358,25 +300,14 @@ fn read_name_table(bytes: &[u8], h: &PackageHeader) -> Result<Vec<String>, Packa
         let name = if h.version >= 64 {
             read_fname_string(&mut c)?
         } else {
-            // Pre-v64 used NUL-terminated raw ASCII with no length prefix.
             read_cstring(&mut c)?
         };
-        // After the name there's an `object_flags: u32`. Older packages used
-        // a `u64` — versions ≤ 64 in particular. We're operating in the
-        // post-v60 range so u32 is correct for L2.
         c.skip(4)?;
         names.push(name);
     }
     Ok(names)
 }
 
-/// Name-table FName string: FCompactIndex length, then `length` ASCII bytes
-/// **including** the terminating NUL.
-///
-/// NOTE: this is NOT the same as `Cursor::read_fstring` — that one uses an
-/// int32 length and handles UTF-16 strings, which is the encoding used for
-/// property values inside object data (UE2 mid-versions onward). The name
-/// table sticks with the compact-index form across UE2.
 fn read_fname_string(c: &mut Cursor) -> Result<String, PackageError> {
     let len = c.read_compact_index()?;
     if len <= 0 {
@@ -423,10 +354,9 @@ fn read_import_table(
             class_package,
             class_name,
             object_name,
-            full_name: String::new(), // filled in below
+            full_name: String::new(),
         });
     }
-    // Two-pass: resolve full_name now that the table exists.
     let mut resolved = Vec::with_capacity(imports.len());
     for (i, e) in imports.iter().enumerate() {
         let full = resolve_full_name_import(&imports, i, names)?;
@@ -481,10 +411,9 @@ fn read_export_table(
             serial_offset,
             object_name,
             class_name,
-            full_name: String::new(), // patched below
+            full_name: String::new(),
         });
     }
-    // Patch full_name now that exports exist (so package_index can resolve).
     let snapshot = exports.clone();
     for e in &mut exports {
         e.full_name = resolve_full_name_export(&snapshot, e, imports, names);
@@ -504,10 +433,7 @@ fn lookup_name(names: &[String], index: i32, table: &'static str) -> Result<Stri
     Ok(names[i].clone())
 }
 
-/// UE2 object references are signed integers:
-///   positive  → 1-based index into the export table
-///   negative  → 1-based index into the import table (negated)
-///   zero      → null
+// UE2 object refs: positive = export idx (1-based), negative = import idx (1-based), zero = null.
 fn resolve_object_ref(
     obj_ref: i32,
     imports: &[ImportEntry],
@@ -562,9 +488,6 @@ fn resolve_full_name_import(
     let mut hops = 0;
     while parent != 0 && hops < 16 {
         if parent >= 0 {
-            // Imports only chain through other imports (negative refs into
-            // the import table). A non-negative parent means we've reached
-            // the package root (or a malformed entry); stop.
             break;
         }
         let idx = (-parent - 1) as usize;

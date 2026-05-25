@@ -1,4 +1,49 @@
-export type DatChronicle = "classic" | "modern" | "any";
+import type { ChronicleInfo } from "./ipc";
+
+export const CHRONICLE = {
+    PRELUDE: 0,
+    HARBINGERS_OF_WAR: 1,
+    AGE_OF_SPLENDOR: 2,
+    RISE_OF_DARKNESS: 3,
+    SCIONS_OF_DESTINY: 4,
+    OATH_OF_BLOOD: 5,
+    INTERLUDE: 6,
+    THE_KAMAEL: 7,
+    HELLBOUND: 8,
+    GRACIA: 9,
+    GRACIA_PLUS: 10,
+    GRACIA_FINAL: 11,
+    EPILOGUE: 12,
+    FREYA_TAUTI: 13,
+    HIGH_FIVE: 14,
+    AWAKENING: 15,
+    LINDVIOR: 16,
+    VALIANCE: 17,
+    ERTHEIA: 18,
+    UNDERGROUND: 19,
+    HELIOS: 20,
+    GRAND_CRUSADE: 21,
+    SALVATION: 22,
+    ETINAS_FATE: 23,
+    FAFURION: 24,
+    PRELUDE_OF_WAR: 25,
+    PRELUDE_OF_WAR_2: 26,
+    PRELUDE_OF_WAR_3: 27,
+    HOMUNCULUS: 28,
+    HOMUNCULUS_2: 29,
+    RETURN_OF_QUEEN_ANT: 30,
+    RETURN_OF_QUEEN_ANT_2: 31,
+    MASTER_CLASS: 32,
+    MASTER_CLASS_2: 33,
+    MASTER_CLASS_3: 34,
+    SOURCE_OF_FLAME: 35,
+    AGE_OF_MAGIC: 36,
+    SHINEMAKER: 37,
+    PATH_OF_ROGUE: 38,
+    SHIELD_OF_KINGDOM: 39,
+    SUPERION: 40,
+    ORC_VILLAGE: 41
+} as const;
 
 export type Tier2DatEntry = {
     key: string;
@@ -8,8 +53,8 @@ export type Tier2DatEntry = {
     pickerTitle: string;
     defaultSubfolder: string;
     indexField?: string;
-    chronicle?: DatChronicle;
-
+    minChronicle?: number;
+    maxChronicle?: number;
     appliesTo?: "skill" | "class" | "world" | "npc";
 };
 
@@ -21,7 +66,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         schemaName: "skillsoundgrp",
         pickerTitle: "Pick SkillSoundgrp.dat (under <client>/system/)",
         defaultSubfolder: "system",
-        chronicle: "any"
+        minChronicle: CHRONICLE.SCIONS_OF_DESTINY
     },
     {
         key: "skill_acquire",
@@ -30,7 +75,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         schemaName: "skillacquire",
         pickerTitle: "Pick SkillAcquire.dat (under <client>/system/)",
         defaultSubfolder: "system",
-        chronicle: "classic"
+        minChronicle: CHRONICLE.ERTHEIA
     },
     {
         key: "replace_skill_icon",
@@ -39,7 +84,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         schemaName: "replaceskillicon",
         pickerTitle: "Pick ReplaceSkillIcon.dat",
         defaultSubfolder: "system",
-        chronicle: "classic"
+        minChronicle: CHRONICLE.AWAKENING
     },
     {
         key: "alter_skill_data",
@@ -49,7 +94,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         pickerTitle: "Pick AlterSkillData.dat",
         defaultSubfolder: "system",
         indexField: "origin_skill_id",
-        chronicle: "any"
+        minChronicle: CHRONICLE.AWAKENING
     },
     {
         key: "skill_enchant_setting",
@@ -58,7 +103,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         schemaName: "SkillEnchantSetting",
         pickerTitle: "Pick SkillEnchantSetting.dat",
         defaultSubfolder: "system",
-        chronicle: "classic"
+        minChronicle: CHRONICLE.ERTHEIA
     },
     {
         key: "skill_enchant_charge",
@@ -67,7 +112,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         schemaName: "skillenchantcharge",
         pickerTitle: "Pick SkillEnchantCharge.dat",
         defaultSubfolder: "system",
-        chronicle: "classic"
+        minChronicle: CHRONICLE.ERTHEIA
     },
     {
         key: "class_info",
@@ -79,7 +124,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "class",
         appliesTo: "class",
-        chronicle: "any"
+        minChronicle: CHRONICLE.ERTHEIA
     },
     {
         key: "class_tree",
@@ -91,7 +136,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "id",
         appliesTo: "class",
-        chronicle: "any"
+        minChronicle: CHRONICLE.PRELUDE_OF_WAR
     },
     {
         key: "class_tree_desc",
@@ -103,7 +148,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "classID",
         appliesTo: "class",
-        chronicle: "any"
+        minChronicle: CHRONICLE.PRELUDE_OF_WAR
     },
     {
         key: "class_initial_stat",
@@ -115,7 +160,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "class",
         appliesTo: "class",
-        chronicle: "any"
+        minChronicle: CHRONICLE.SALVATION
     },
     {
         key: "minimap_region",
@@ -127,7 +172,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "regionid",
         appliesTo: "world",
-        chronicle: "any"
+        minChronicle: CHRONICLE.SCIONS_OF_DESTINY
     },
     {
         key: "hunting_zone",
@@ -139,7 +184,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "id",
         appliesTo: "world",
-        chronicle: "any"
+        minChronicle: CHRONICLE.LINDVIOR
     },
     {
         key: "npc_name",
@@ -151,7 +196,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "id",
         appliesTo: "npc",
-        chronicle: "any"
+        minChronicle: CHRONICLE.SCIONS_OF_DESTINY
     },
     {
         key: "npc_grp",
@@ -163,7 +208,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "npc_id",
         appliesTo: "npc",
-        chronicle: "any"
+        minChronicle: CHRONICLE.SCIONS_OF_DESTINY
     },
     {
         key: "npc_string",
@@ -175,7 +220,7 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "stringID",
         appliesTo: "npc",
-        chronicle: "any"
+        minChronicle: CHRONICLE.HIGH_FIVE
     },
     {
         key: "npc_teleporter",
@@ -187,10 +232,24 @@ export const TIER2_DATS: Tier2DatEntry[] = [
         defaultSubfolder: "system",
         indexField: "npc_id",
         appliesTo: "npc",
-        chronicle: "any"
+        minChronicle: CHRONICLE.ERTHEIA
     }
 ];
 
 export function getTier2Entry(key: string): Tier2DatEntry | undefined {
     return TIER2_DATS.find((e) => e.key === key);
+}
+
+export function isTier2AvailableIn(
+    entry: Tier2DatEntry,
+    chronicle: ChronicleInfo | null,
+    availableSchemas: ReadonlySet<string> | null
+): boolean {
+    if (availableSchemas) {
+        return availableSchemas.has(entry.schemaName.toLowerCase());
+    }
+    if (!chronicle) return true;
+    const min = entry.minChronicle ?? 0;
+    const max = entry.maxChronicle ?? Number.POSITIVE_INFINITY;
+    return chronicle.ordinal >= min && chronicle.ordinal <= max;
 }

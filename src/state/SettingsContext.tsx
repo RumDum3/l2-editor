@@ -1,5 +1,13 @@
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { type AppConfig, type ClientDatPaths, ipc, type SkillgrpSummary, type SkillNameSummary } from "../lib/ipc";
+import {
+    type AppConfig,
+    type ChronicleDatEntry,
+    type ChronicleInfo,
+    type ClientDatPaths,
+    ipc,
+    type SkillgrpSummary,
+    type SkillNameSummary
+} from "../lib/ipc";
 import { logger } from "../lib/logger";
 import { invalidateAll as invalidateSkillRowCache } from "../lib/skillRowCache";
 import { invalidateAllSkillnames } from "../lib/skillNameRowCache";
@@ -54,6 +62,11 @@ type SettingsState = {
     refreshPendingSkillNameEdits: () => Promise<void>;
     refreshPendingTier2Edits: (key: string) => Promise<void>;
     syncToClient: () => Promise<void>;
+    chronicles: ChronicleInfo[];
+    chronicle: ChronicleInfo | null;
+    setChronicleId: (id: string | null) => Promise<void>;
+    chronicleDats: ChronicleDatEntry[] | null;
+    availableSchemas: ReadonlySet<string> | null;
 };
 
 const SettingsCtx = createContext<SettingsState | null>(null);
@@ -92,6 +105,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             skillgrpDatPath: cur?.skillgrpDatPath ?? "",
             tier2DatPaths: cur?.tier2DatPaths,
             clientProtocol: cur?.clientProtocol ?? null,
+            chronicleId: cur?.chronicleId ?? null,
             ...patch
         };
         configRef.current = next;
@@ -106,6 +120,76 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         [writePartial]
     );
     const setSkillgrpDatPath = useCallback((path: string) => writePartial({ skillgrpDatPath: path }), [writePartial]);
+
+    const [chronicles, setChronicles] = useState<ChronicleInfo[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        void ipc
+            .listChronicles()
+            .then((list) => {
+                if (!cancelled) setChronicles(list);
+            })
+            .catch((e) => logger.warn("settings", "list_chronicles failed", { message: String(e) }));
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const chronicle = useMemo<ChronicleInfo | null>(() => {
+        if (chronicles.length === 0) return null;
+        const explicit = config?.chronicleId;
+        if (explicit) {
+            const m = chronicles.find((c) => c.id.toLowerCase() === explicit.toLowerCase());
+            if (m) return m;
+        }
+        const proto = config?.clientProtocol;
+        if (typeof proto === "number") {
+            let best: ChronicleInfo | null = null;
+            for (const c of chronicles) {
+                if (c.protocol == null) continue;
+                if (c.protocol <= proto && (best == null || (best.protocol ?? 0) < c.protocol)) {
+                    best = c;
+                }
+            }
+            if (best) return best;
+        }
+        return chronicles[chronicles.length - 1] ?? null;
+    }, [chronicles, config?.chronicleId, config?.clientProtocol]);
+
+    const setChronicleId = useCallback(
+        (id: string | null) => writePartial({ chronicleId: id }),
+        [writePartial]
+    );
+
+    const [chronicleDats, setChronicleDats] = useState<ChronicleDatEntry[] | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        if (!chronicle) {
+            setChronicleDats(null);
+            return;
+        }
+        if (!chronicle.definitionFile) {
+            setChronicleDats(null);
+            return;
+        }
+        void ipc
+            .chronicleDats(chronicle.id)
+            .then((list) => {
+                if (!cancelled) setChronicleDats(list);
+            })
+            .catch((e) => {
+                logger.warn("settings", "chronicle_dats failed", { chronicle: chronicle.id, message: String(e) });
+                if (!cancelled) setChronicleDats(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [chronicle?.id, chronicle?.definitionFile]);
+
+    const availableSchemas = useMemo<ReadonlySet<string> | null>(() => {
+        if (!chronicleDats) return null;
+        return new Set(chronicleDats.map((d) => d.schemaName.toLowerCase()));
+    }, [chronicleDats]);
     const setTier2DatPath = useCallback(
         (key: string, path: string) => {
             const next = { ...(config?.tier2DatPaths ?? {}), [key]: path };
@@ -511,7 +595,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             refreshPendingClientEdits,
             refreshPendingSkillNameEdits,
             refreshPendingTier2Edits,
-            syncToClient
+            syncToClient,
+            chronicles,
+            chronicle,
+            setChronicleId,
+            chronicleDats,
+            availableSchemas
         }),
         [
             config,
@@ -536,7 +625,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             refreshPendingClientEdits,
             refreshPendingSkillNameEdits,
             refreshPendingTier2Edits,
-            syncToClient
+            syncToClient,
+            chronicles,
+            chronicle,
+            setChronicleId,
+            chronicleDats,
+            availableSchemas
         ]
     );
 

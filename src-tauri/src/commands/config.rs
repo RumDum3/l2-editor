@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub tier2_dat_paths: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub client_protocol: Option<u32>,
+    #[serde(default)]
+    pub chronicle_id: Option<String>,
 }
 
 pub fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

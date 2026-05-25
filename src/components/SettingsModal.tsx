@@ -2,9 +2,10 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { CircleCheck, X } from "lucide-react";
 import { useState } from "react";
 import { useSettings } from "../state/SettingsContext";
+import { TIER2_DATS, isTier2AvailableIn } from "../lib/tier2Dats";
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-    const { config, setDataRoot, setClientRoot } = useSettings();
+    const { config, setDataRoot, setClientRoot, chronicles, chronicle, setChronicleId } = useSettings();
     if (!open) return null;
 
     const pickData = async () => {
@@ -96,11 +97,79 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     </p>
                 </Row>
 
+                <Row label="Chronicle">
+                    <div className="flex items-center gap-2">
+                        <select
+                            value={config?.chronicleId ?? ""}
+                            onChange={(e) => void setChronicleId(e.target.value || null)}
+                            className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px] text-[var(--color-text)]"
+                        >
+                            <option value="">
+                                Auto-detect{chronicle ? ` (${chronicle.label})` : ""}
+                            </option>
+                            {chronicles.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                    {c.label}
+                                    {c.protocol != null ? ` — proto ${c.protocol}` : ""}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+                        Gates which client dats and editor fields are visible. Auto-detected from the L2.exe
+                        protocol probe; override if your build doesn't match.
+                    </p>
+                </Row>
+
                 <Row label="Skill data (auto-detected)">
                     <ClientSkillDataStatus />
                     <RebuildDatsButton />
                 </Row>
+
+                <Row label="Client dats by chronicle">
+                    <Tier2DatChronicleList />
+                </Row>
             </div>
+        </div>
+    );
+}
+
+function Tier2DatChronicleList() {
+    const { chronicle, config, availableSchemas } = useSettings();
+    const unknownChronicle = chronicle != null && availableSchemas == null;
+    return (
+        <div className="max-h-[180px] overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2">
+            {unknownChronicle && (
+                <div className="mb-1 px-1 text-[10px] text-[var(--color-text-faint)]">
+                    No schema definition shipped for this chronicle — showing best-effort list.
+                </div>
+            )}
+            {TIER2_DATS.map((d) => {
+                const available = isTier2AvailableIn(d, chronicle, availableSchemas);
+                const loaded = !!config?.tier2DatPaths?.[d.key];
+                return (
+                    <div
+                        key={d.key}
+                        className={`flex items-center gap-2 px-1 py-0.5 text-[11px] ${available ? "" : "opacity-40"}`}
+                        title={available ? d.description : `Not available before chronicle ordinal ${d.minChronicle ?? 0}`}
+                    >
+                        <span
+                            className="inline-block h-2 w-2 shrink-0 rounded-full"
+                            style={{
+                                background: !available
+                                    ? "var(--color-text-faint)"
+                                    : loaded
+                                      ? "var(--color-success, #4ade80)"
+                                      : "var(--color-warning, #f59e0b)"
+                            }}
+                        />
+                        <span className="flex-1 truncate">{d.label}</span>
+                        <span className="font-mono text-[10px] text-[var(--color-text-faint)]">
+                            {!available ? "n/a" : loaded ? "loaded" : "missing"}
+                        </span>
+                    </div>
+                );
+            })}
         </div>
     );
 }

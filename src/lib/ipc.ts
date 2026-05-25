@@ -7,6 +7,22 @@ export type AppConfig = {
     skillgrpDatPath: string;
     tier2DatPaths?: Record<string, string>;
     clientProtocol?: number | null;
+    chronicleId?: string | null;
+};
+
+export type ChronicleInfo = {
+    id: string;
+    label: string;
+    ordinal: number;
+    protocol: number | null;
+    family: "ancient" | "pre-awakening" | "awakening" | "classic" | "essence";
+    definitionFile: string | null;
+};
+
+export type ChronicleDatEntry = {
+    pattern: string;
+    schemaName: string;
+    introducedVersion: string;
 };
 
 export type XmlFileEntry = {
@@ -33,6 +49,9 @@ export const ipc = {
         invoke<XmlFileEntry[]>("list_xml_files", { folder, recursive }),
     loadWorldSpawns: (dataRoot: string) => invoke<WorldSpawns>("load_world_spawns", { dataRoot }),
     probeL2Protocol: (clientRoot: string) => invoke<number>("probe_l2_protocol", { clientRoot }),
+    listChronicles: () => invoke<ChronicleInfo[]>("list_chronicles"),
+    inferChronicle: (protocol: number) => invoke<ChronicleInfo>("infer_chronicle", { protocol }),
+    chronicleDats: (chronicleId: string) => invoke<ChronicleDatEntry[]>("chronicle_dats", { chronicleId }),
     readServerProtocols: (dataRoot: string) => invoke<number[]>("read_server_protocols", { dataRoot }),
     discoverClientDats: (clientRoot: string) => invoke<ClientDatPaths>("discover_client_dats", { clientRoot }),
     importSkillNames: (path: string) => invoke<SkillNameSummary>("import_skill_names", { path }),

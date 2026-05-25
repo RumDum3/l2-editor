@@ -1,18 +1,3 @@
-//! Tiny little-endian byte cursor with the UE2 helpers we need:
-//! u8/u16/u32/i32/u64, raw byte slices, FString (length-prefixed strings),
-//! and the variable-length "compact index" UE2 uses for table indices.
-//!
-//! UE2 strings come in two flavours:
-//!   - ASCII: `int32 length` (positive) followed by `length` bytes including a
-//!     terminating NUL.
-//!   - UTF-16LE: `int32 length` (negative; `length = -charCount`) followed by
-//!     `|length| * 2` bytes including a terminating NUL u16.
-//!
-//! The compact index encoding ("FCompactIndex"): up to 5 bytes, first byte's
-//! top bit = sign, second-top bit = continuation, remaining 6 bits = low value;
-//! each subsequent byte contributes 7 more bits (top bit = continuation).
-//! Result is i32.
-
 use std::io;
 
 #[derive(Debug)]
@@ -109,9 +94,6 @@ impl<'a> Cursor<'a> {
         Ok(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
-    /// FString: int32 length, then bytes. Positive → ASCII (length includes
-    /// terminating NUL). Negative → UTF-16LE (`|length|` chars including NUL).
-    /// Zero → empty.
     pub fn read_fstring(&mut self) -> Result<String, CursorError> {
         let len = self.read_i32()?;
         if len == 0 {
@@ -119,7 +101,6 @@ impl<'a> Cursor<'a> {
         }
         if len > 0 {
             let bytes = self.read_bytes(len as usize)?;
-            // Drop trailing NUL if present.
             let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
         } else {
@@ -134,7 +115,6 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    /// FCompactIndex — variable-length signed int.
     pub fn read_compact_index(&mut self) -> Result<i32, CursorError> {
         let b0 = self.read_u8()?;
         let negative = (b0 & 0x80) != 0;
@@ -150,7 +130,6 @@ impl<'a> Cursor<'a> {
                     value |= ((b3 & 0x7F) as u32) << 20;
                     if b3 & 0x80 != 0 {
                         let b4 = self.read_u8()?;
-                        // Top byte: only 5 bits remain to reach 32 total.
                         value |= ((b4 & 0x1F) as u32) << 27;
                     }
                 }

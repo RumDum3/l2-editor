@@ -44,18 +44,6 @@ pub async fn list_package_exports(
     .map_err(|e| format!("join error: {e}"))?
 }
 
-// ─── package file index ───────────────────────────────────────────────────────
-//
-// One client root has roughly a few hundred package files spread across
-// Animations/, StaticMeshes/, Textures/, SysTextures/, and system/. We walk
-// those folders once, cache the result keyed by lower-cased file stem
-// (e.g. "lineagenpcs" → "E:/L2/Animations/LineageNpcs.ukx"), and reuse the
-// map for every NPC the user opens.
-//
-// Invalidation: keyed by client root path. If the user changes client root
-// (or hits "rebuild caches" in Settings) we drop the entry and rebuild on
-// next call.
-
 #[derive(Default)]
 struct PackageIndex {
     by_stem: HashMap<String, PathBuf>,
@@ -64,9 +52,6 @@ struct PackageIndex {
 static INDEX_CACHE: Lazy<Mutex<HashMap<String, std::sync::Arc<PackageIndex>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-// Most-recently-used parsed-package cache. Keyed by absolute path. Bounded so
-// big sessions don't pin half the client into memory — 8 packages × ~100 MB
-// is the worst case, fine on any modern dev box.
 const PARSED_CACHE_CAP: usize = 8;
 static PARSED_CACHE: Lazy<Mutex<Vec<(String, std::sync::Arc<Package>)>>> =
     Lazy::new(|| Mutex::new(Vec::new()));
@@ -76,7 +61,6 @@ fn parsed_package(path: &Path) -> Result<std::sync::Arc<Package>, model_engine::
     {
         let mut cache = PARSED_CACHE.lock().unwrap();
         if let Some(pos) = cache.iter().position(|(k, _)| *k == key) {
-            // Touch — move to back so we evict the oldest, not the newest.
             let entry = cache.remove(pos);
             cache.push(entry);
             return Ok(cache.last().unwrap().1.clone());
@@ -145,7 +129,6 @@ fn get_index(client_root: &Path) -> std::sync::Arc<PackageIndex> {
 pub struct PackageIndexSummary {
     pub root: String,
     pub package_count: usize,
-    /// First 50 package stems for sanity-checking the index.
     pub sample: Vec<String>,
 }
 
@@ -173,19 +156,6 @@ pub async fn build_package_index(client_root: String) -> Result<PackageIndexSumm
     .await
     .map_err(|e| format!("join error: {e}"))?
 }
-
-// ─── npc-grp model resolver ───────────────────────────────────────────────────
-//
-// `mesh_name` from NpcGrp.dat looks like "LineageNpcs.Mob.Spider01":
-//   first segment  → package name (case-insensitive, becomes file stem)
-//   remaining      → export's full dotted name within that package
-//
-// We resolve in three steps:
-//   1) look the package stem up in the file index
-//   2) open + parse the package (cipher-aware, via dat_engine)
-//   3) find the export by full dotted name (or fall back to just the leaf)
-// then return everything the UI needs to display + the bytes the next phase
-// will decode.
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -272,8 +242,6 @@ pub async fn resolve_npc_model(
             }
         };
 
-        // Try full dotted path first ("Mob.Spider01"), fall back to just the
-        // leaf ("Spider01") for packages that don't nest exports under groups.
         let leaf = export_path.rsplit('.').next().unwrap_or(&export_path);
         let found = parsed.find_export(&export_path).cloned().or_else(|| {
             if leaf != export_path {

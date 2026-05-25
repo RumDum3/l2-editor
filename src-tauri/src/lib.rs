@@ -27,6 +27,7 @@ use commands::textures::{
     clear_texture_cache, list_map_regions, list_textures, read_region_terrain_texture,
     read_texture,
 };
+use commands::chronicle::{chronicle_dats, infer_chronicle, list_chronicles};
 use commands::model::{
     build_package_index, dump_mesh_payload, dump_package, list_package_exports, load_skeletal_mesh,
     resolve_npc_model,
@@ -99,6 +100,9 @@ pub fn run() {
             resolve_npc_model,
             load_skeletal_mesh,
             dump_mesh_payload,
+            list_chronicles,
+            infer_chronicle,
+            chronicle_dats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

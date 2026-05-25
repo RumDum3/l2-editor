@@ -4,19 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { MeshData } from "../../lib/ipc";
 
-/**
- * Phase-2 viewport: renders the decoded packed positions as a point cloud.
- * Triangles + materials land in phase 3; until then, the dot-silhouette is
- * enough to confirm the whole decryption → parse → unpack pipeline lines up.
- *
- * L2 mesh coordinates are Unreal-style (z-up, right-handed). Three.js is
- * y-up; we mount the mesh under a -90° X rotation so its Z axis becomes
- * three.js's Y (up), and frame the camera against the cloud's actual extents
- * rather than the (sometimes oversized) declared bbox.
- */
 export function NpcModelViewport({ mesh }: { mesh: MeshData }) {
-    // Compute the actual extents of the point cloud — the declared bbox can
-    // be larger than the geometry occupies, which throws off camera framing.
     const cloudInfo = useMemo(() => {
         const p = mesh.positions;
         if (p.length === 0) {
@@ -38,8 +26,7 @@ export function NpcModelViewport({ mesh }: { mesh: MeshData }) {
         const cz = (minZ + maxZ) / 2;
         const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
         const radius = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz) / 2, 1);
-        // Mesh-space center → three.js-space center via the rotation we apply
-        // to the group below. (-π/2 around X swaps Y↔−Z, Z→Y.)
+        // -PI/2 X rotation maps mesh Z to three.js Y.
         const worldCenter: [number, number, number] = [cx, cz, -cy];
         return { center: worldCenter, radius };
     }, [mesh.positions]);
@@ -78,8 +65,6 @@ function PointCloud({ positions }: { positions: number[] }) {
     const geomRef = useRef<THREE.BufferGeometry>(null);
     const { posBuffer, colorBuffer } = useMemo(() => {
         const posBuffer = new Float32Array(positions);
-        // Color points by mesh-Z (height) so the silhouette pops even without
-        // triangles. Cool blue at the bottom → hot pink at the top.
         let minZ = Infinity, maxZ = -Infinity;
         for (let i = 2; i < posBuffer.length; i += 3) {
             const z = posBuffer[i];
