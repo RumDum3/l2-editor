@@ -12,7 +12,8 @@
         "lint": "biome lint .",
         "check": "biome check --write .",
         "release": "node scripts/release.mjs",
-        "note": "node scripts/note.mjs"
+        "note": "node scripts/note.mjs",
+        "zip": "node scripts/zip.mjs"
     },
     "dependencies": {
         "@react-three/drei": "^10.7.7",

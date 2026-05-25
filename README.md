@@ -17,14 +17,25 @@ A desktop editor for Lineage 2 server and client data. Built with Tauri, Rust, a
 
 ## Compatibility
 
-Tested against a single client + server pair so far. Other chronicles and forks will likely need minor adjustments before they parse cleanly.
+L2 Editor is **chronicle-aware** since 0.2.0. The editor ships a list of 42 chronicles from Prelude through Orc Village, and the available client dats / NPC fields / skill lint catalogs are gated to what each chronicle actually supports. Most layers degrade gracefully on chronicles that aren't fully tested.
+
+| Layer | Coverage |
+|---|---|
+| **Cipher** | All `Lineage2Ver` codes (111 / 120 / 121 / 411–414 / 611–614 / 811 / 821) across C4 through Essence. Handled by [`dat_engine`](./dat_engine). |
+| **Server XML** (L2J data folder) | Chronicle-independent — same format across L2J Mobius packs. Works with anything L2J. |
+| **Per-chronicle dat schemas** | 31 chronicles have schema XMLs in `dat_engine/data/structure/` (C4 → Orc Village). Pre-C4 chronicles use best-effort fallback. |
+| **Skill lint catalog** | Helios+ accurate. Older chronicles get structural lints only (the L2J Mobius enum / handler catalog doesn't match pre-Helios builds). |
+| **Skeletal mesh viewer** | Superion v133 verified. Other chronicles probably need format tweaks to render. |
+| **Protocol probe** (`-L2ProtocolVersion`) | Ertheia+. Older clients don't support the flag; manual chronicle override in Settings works around it. |
 
 | | Tested | Status |
 |---|---|---|
-| **Client** | Superion, protocol revision **502** | Working |
-| **Server pack** | L2J Mobius **Superion** | Working |
+| **Client** | Superion, protocol revision **502** | Full coverage |
+| **Server pack** | L2J Mobius **Superion** | Full coverage |
+| **Pre-Helios clients** (Awakening / Ertheia / Underground) | Dat editing should work; skill lint is silenced |
+| **Pre-Awakening clients** (C4 → High Five, Gracia, etc.) | Server XML editing works; client dat coverage is best-effort |
 
-If you try a different chronicle or server pack and want it supported, open an issue with a sample dat and the protocol revision.
+If you try a different chronicle or server pack and want it supported, open an issue with a sample dat and the protocol revision (or your chronicle from Settings).
 
 ## Stack
 
