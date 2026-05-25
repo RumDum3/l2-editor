@@ -1,5 +1,6 @@
 import { PLUGINS } from "../editors/registry";
 import { useEditor } from "../state/EditorContext";
+import { useSettings } from "../state/SettingsContext";
 
 export function Sidebar({
     view,
@@ -17,12 +18,16 @@ export function Sidebar({
     onShowEditor: () => void;
 }) {
     const { loaded, selectCategory } = useEditor();
+    const { hasRadarMap, config } = useSettings();
     const categories = PLUGINS.filter((p) => !!p.dataPath);
+    const worldEnabled = !config?.clientRoot || hasRadarMap;
 
-    const itemCls = (active: boolean) =>
-        `flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-[var(--color-surface-2)] ${
-            active ? "bg-[var(--color-surface-2)] text-[var(--color-accent)]" : ""
-        }`;
+    const itemCls = (active: boolean, disabled?: boolean) =>
+        `flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] ${
+            disabled
+                ? "cursor-not-allowed text-[var(--color-text-faint)] opacity-50"
+                : "hover:bg-[var(--color-surface-2)]"
+        } ${active ? "bg-[var(--color-surface-2)] text-[var(--color-accent)]" : ""}`;
 
     return (
         <aside className="flex h-full w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -44,7 +49,17 @@ export function Sidebar({
                 >
                     Experience
                 </button>
-                <button type="button" onClick={onShowWorld} className={itemCls(view === "world")} title="World">
+                <button
+                    type="button"
+                    onClick={worldEnabled ? onShowWorld : undefined}
+                    disabled={!worldEnabled}
+                    className={itemCls(view === "world", !worldEnabled)}
+                    title={
+                        worldEnabled
+                            ? "World"
+                            : "World map unavailable — L2_RadarMap.utx not found under client SysTextures/ or Textures/"
+                    }
+                >
                     World
                 </button>
                 <button

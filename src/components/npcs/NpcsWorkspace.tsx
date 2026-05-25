@@ -1,26 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ClientNpc, loadClientNpcs } from "../../lib/clientNpcs";
+import { compareValue, type Drift, type DriftField } from "../../lib/drift";
 import { ipc, type NpcInfo, type SpawnPoint } from "../../lib/ipc";
 import { logger } from "../../lib/logger";
 import { EMPTY_SPAWN_INDEX, loadWorldSpawns, type WorldSpawnIndex } from "../../lib/spawns";
 import { useSettings } from "../../state/SettingsContext";
 import { useSetToolbarSlot } from "../../state/ToolbarSlot";
+import { DriftBadge, DriftBanner } from "../Drift";
 import { EditActions } from "../EditActions";
 import { NpcEditor } from "./NpcEditor";
-
-function normalizeName(s: string): string {
-    const INVISIBLE = /[   　​]/g;
-    return s.replace(INVISIBLE, " ").replace(/\s+/g, " ").trim().normalize("NFC");
-}
-
-interface DriftDetail {
-    id: number;
-    serverName: string;
-    clientName: string | null;
-    clientNick: string;
-    nameMismatch: boolean;
-    missingInClient: boolean;
-}
 
 interface NpcRow {
     info: NpcInfo;
@@ -28,8 +16,7 @@ interface NpcRow {
     spawnCount: number;
     bossCount: number;
     clients: Map<number, ClientNpc>;
-    drift: DriftDetail[];
-    hasDrift: boolean;
+    drift: Drift;
 }
 
 export function NpcsWorkspace({
@@ -93,39 +80,37 @@ export function NpcsWorkspace({
                     spawnCount: sc,
                     bossCount: bc,
                     clients: new Map(),
-                    drift: [],
-                    hasDrift: false
+                    drift: { clientSource: "NpcName.dat", fields: [] }
                 });
             }
         }
         const hasClient = clientNpcs.size > 0;
         for (const row of groups.values()) {
+            const fields: DriftField[] = [];
             for (const id of row.ids) {
                 const c = clientNpcs.get(id);
                 if (c) row.clients.set(id, c);
                 if (!hasClient) continue;
                 const serverName = row.info.name ?? "";
+                const idLabel = row.ids.length > 1 ? `name (#${id})` : "name";
                 if (!c) {
-                    row.drift.push({
-                        id,
-                        serverName,
-                        clientName: null,
-                        clientNick: "",
-                        nameMismatch: false,
-                        missingInClient: true
+                    fields.push({
+                        label: idLabel,
+                        server: serverName || "(empty)",
+                        client: null,
+                        kind: "missingInClient",
+                        note: `id ${id} not present in NpcName.dat`
                     });
-                } else if (serverName && c.name && normalizeName(serverName) !== normalizeName(c.name)) {
-                    row.drift.push({
-                        id,
-                        serverName,
-                        clientName: c.name,
-                        clientNick: c.nick,
-                        nameMismatch: true,
-                        missingInClient: false
-                    });
+                    continue;
                 }
+                const f = compareValue({ label: idLabel, server: serverName, client: c.name });
+                if (f) fields.push(f);
             }
-            row.hasDrift = row.drift.length > 0;
+            row.drift = {
+                subject: row.ids.length > 1 ? `${row.ids.length} variants` : `#${row.info.id}`,
+                clientSource: "NpcName.dat",
+                fields
+            };
         }
         return [...groups.values()].sort((a, b) => a.info.id - b.info.id);
     }, [index, clientNpcs]);
@@ -200,7 +185,7 @@ export function NpcsWorkspace({
         async (id: number, name: string, _title: string) => {
             const client = clientNpcs.get(id);
             if (!client) return;
-            if (normalizeName(name) === normalizeName(client.name)) return;
+            if (compareValue({ label: "name", server: name, client: client.name }) === null) return;
             try {
                 await ipc.applyGenericDatEdits("npc_name", { id }, { name });
                 await refreshPendingTier2Edits("npc_name");
@@ -344,15 +329,7 @@ export function NpcsWorkspace({
                                 >
                                     {r.info.name || "(unnamed)"}
                                 </span>
-                                {r.hasDrift && (
-                                    <span
-                                        className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-1.5 py-0.5 text-[10px] text-[var(--color-warning)]"
-                                        title={driftTitle(r)}
-                                    >
-                                        <span className="font-bold leading-none">!</span>
-                                        <span className="font-mono">{driftSummary(r)}</span>
-                                    </span>
-                                )}
+                                <DriftBadge drift={r.drift} />
                                 {r.ids.length > 1 && (
                                     <span
                                         className="shrink-0 rounded bg-white/5 px-1 font-mono text-[10px] text-[var(--color-text-faint)]"
@@ -400,12 +377,9 @@ export function NpcsWorkspace({
                         </div>
                     </div>
                 )}
-                {selected && selected.hasDrift && (
-                    <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 px-3 py-1 text-[10px] text-[var(--color-warning)]">
-                        <span className="font-bold">!</span>
-                        <span>
-                            Server disagrees with client NpcName.dat for this NPC — saving will queue a client sync.
-                        </span>
+                {selected && selected.drift.fields.length > 0 && (
+                    <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+                        <DriftBanner drift={selected.drift} title="NPC out of sync with client" />
                     </div>
                 )}
                 {editingNpc ? (
@@ -429,25 +403,6 @@ export function NpcsWorkspace({
             </div>
         </div>
     );
-}
-
-function driftSummary(row: NpcRow): string {
-    const d = row.drift[0];
-    if (!d) return "";
-    if (d.missingInClient) return `missing in client${row.drift.length > 1 ? ` +${row.drift.length - 1}` : ""}`;
-    const client = d.clientName || "(empty)";
-    const more = row.drift.length > 1 ? ` +${row.drift.length - 1}` : "";
-    return `client: ${client}${more}`;
-}
-
-function driftTitle(row: NpcRow): string {
-    const lines = [`${row.drift.length} of ${row.ids.length} id(s) disagree with client:`];
-    for (const d of row.drift.slice(0, 4)) {
-        if (d.missingInClient) lines.push(`  #${d.id}: missing in client NpcName`);
-        else lines.push(`  #${d.id}: server "${d.serverName}" / client "${d.clientName ?? ""}"`);
-    }
-    if (row.drift.length > 4) lines.push(`  … and ${row.drift.length - 4} more`);
-    return lines.join("\n");
 }
 
 function Placeholder({ children }: { children: React.ReactNode }) {

@@ -1,3 +1,4 @@
+import { CHRONICLE } from "../../lib/tier2Dats";
 import { widgetFor } from "./data/enums";
 import { isBoolField } from "./data/fieldCatalog";
 import { CONDITION_HANDLERS, EFFECT_HANDLERS } from "./data/handlers";
@@ -6,15 +7,24 @@ import type { FieldValue, Skill } from "./model";
 export type LintLevel = "error" | "warn";
 export type LintIssue = { level: LintLevel; where: string; msg: string };
 
+export type LintOptions = {
+    chronicleOrdinal?: number | null;
+};
+
+// Catalogs are L2J Mobius Superion-era; pre-Helios chronicles use different idioms.
+const CATALOG_MIN_CHRONICLE = CHRONICLE.HELIOS;
+
 function perLevelLevels(v: FieldValue): number[] {
     if (v.kind === "single") return [];
     const base = v.kind === "perLevel" ? v.values : v.base;
     return [...base.keys()];
 }
 
-export function lintSkill(skill: Skill): LintIssue[] {
+export function lintSkill(skill: Skill, opts: LintOptions = {}): LintIssue[] {
     const out: LintIssue[] = [];
     const has = (tag: string) => skill.fields.some((f) => f.tag === tag);
+    const catalogApplies =
+        opts.chronicleOrdinal == null || opts.chronicleOrdinal >= CATALOG_MIN_CHRONICLE;
 
     if (!has("operateType")) {
         out.push({
@@ -46,7 +56,7 @@ export function lintSkill(skill: Skill): LintIssue[] {
             }
         } else {
             const w = widgetFor(f.tag);
-            if (w?.kind === "select" && f.value.value && !w.choices.includes(f.value.value)) {
+            if (catalogApplies && w?.kind === "select" && f.value.value && !w.choices.includes(f.value.value)) {
                 out.push({
                     level: "warn",
                     where: f.tag,
@@ -78,29 +88,31 @@ export function lintSkill(skill: Skill): LintIssue[] {
         }
     }
 
-    const knownEffects = new Set(EFFECT_HANDLERS);
-    const knownConditions = new Set(CONDITION_HANDLERS);
-    for (const g of skill.effectGroups) {
-        for (const it of g.items) {
-            if (it.handler && !knownEffects.has(it.handler)) {
-                out.push({
-                    level: "warn",
-                    where: `${g.scope} / ${it.handler}`,
-                    msg: `"${it.handler}" isn't a recognized effect handler (written verbatim — fine if your server build added it).`
-                });
+    if (catalogApplies) {
+        const knownEffects = new Set(EFFECT_HANDLERS);
+        const knownConditions = new Set(CONDITION_HANDLERS);
+        for (const g of skill.effectGroups) {
+            for (const it of g.items) {
+                if (it.handler && !knownEffects.has(it.handler)) {
+                    out.push({
+                        level: "warn",
+                        where: `${g.scope} / ${it.handler}`,
+                        msg: `"${it.handler}" isn't a recognized effect handler (written verbatim — fine if your server build added it).`
+                    });
+                }
             }
         }
-    }
-    for (const g of skill.conditionGroups) {
-        for (const leaf of g.leaves) {
-            if (leaf.kind !== "handler") continue;
-            const h = leaf.item.handler;
-            if (h && !knownConditions.has(h)) {
-                out.push({
-                    level: "warn",
-                    where: `${g.scope} / ${h}`,
-                    msg: `"${h}" isn't a recognized condition handler.`
-                });
+        for (const g of skill.conditionGroups) {
+            for (const leaf of g.leaves) {
+                if (leaf.kind !== "handler") continue;
+                const h = leaf.item.handler;
+                if (h && !knownConditions.has(h)) {
+                    out.push({
+                        level: "warn",
+                        where: `${g.scope} / ${h}`,
+                        msg: `"${h}" isn't a recognized condition handler.`
+                    });
+                }
             }
         }
     }

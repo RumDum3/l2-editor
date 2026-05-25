@@ -7,7 +7,7 @@ mod world_spawns;
 
 use commands::config::{read_config, read_ui_prefs, write_config, write_ui_prefs};
 use commands::dat::{load_dat, save_dat};
-use commands::discovery::{discover_client_dats, read_server_protocols};
+use commands::discovery::{discover_client_dats, has_radar_map, read_server_protocols};
 use commands::generic_dat::{
     add_generic_dat_row, apply_generic_dat_edits, delete_generic_dat_row,
     distinct_generic_dat_values, dump_generic_dat_rows, import_generic_dat, lookup_generic_rows,
@@ -63,6 +63,7 @@ pub fn run() {
             probe_l2_protocol,
             read_server_protocols,
             discover_client_dats,
+            has_radar_map,
             import_skill_names,
             read_skillname_summary,
             lookup_skillname_rows,

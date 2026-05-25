@@ -5,6 +5,7 @@ import { type ClientSkillRow, ipc, type SkillnameRow } from "../../lib/ipc";
 import { pickCanonicalSkillname } from "../../lib/skillNameRowCache";
 import { formatSkillText } from "../../lib/skillText";
 import { useSettings } from "../../state/SettingsContext";
+import { DriftBanner } from "../Drift";
 import { TextureImage } from "../TextureImage";
 
 function ms(v: number | null | undefined): string | null {
@@ -118,9 +119,21 @@ export function SkillInfoModal({
 
                 <div className="space-y-3 px-4 py-3">
                     {nameMismatch && (
-                        <div className="rounded border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-2 py-1 text-[10px] text-[var(--color-warning)]">
-                            client SkillName says “{clientName}” — the skills XML name is “{brief?.name}”.
-                        </div>
+                        <DriftBanner
+                            drift={{
+                                subject: `skill #${id}`,
+                                clientSource: "SkillName.dat",
+                                fields: [
+                                    {
+                                        label: "name",
+                                        server: brief?.name ?? null,
+                                        client: clientName,
+                                        kind: "mismatch"
+                                    }
+                                ]
+                            }}
+                            title="server name disagrees with client"
+                        />
                     )}
 
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">

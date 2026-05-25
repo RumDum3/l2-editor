@@ -1,9 +1,11 @@
 import { X } from "lucide-react";
 import { useState } from "react";
+import { compareValue, type Drift } from "../../../lib/drift";
 import { ipc } from "../../../lib/ipc";
 import { logger } from "../../../lib/logger";
 import { invalidateTier2Id, useTier2Rows } from "../../../lib/tier2RowCache";
 import { useSettings } from "../../../state/SettingsContext";
+import { DriftMarker } from "../../Drift";
 import { HelpIcon, Tooltip } from "../../Tooltip";
 import {
     buildChainArray,
@@ -193,10 +195,14 @@ export function ClassInitialStatsBlock({
                                     </td>
                                     {INIT_STAT_COLS.map((k) => {
                                         const cur = Number(r[k]);
-                                        const drift =
-                                            templateStats?.[k] != null &&
-                                            Number.isFinite(cur) &&
-                                            cur !== templateStats[k];
+                                        const tmpl = templateStats?.[k];
+                                        const driftField =
+                                            tmpl != null && Number.isFinite(cur) && cur !== tmpl
+                                                ? compareValue({ label: k, server: tmpl, client: cur })
+                                                : null;
+                                        const drift: Drift | null = driftField
+                                            ? { clientSource: "CharacterInitialStatExData.dat", fields: [driftField] }
+                                            : null;
                                         return (
                                             <td key={k} className="px-0.5 py-0.5">
                                                 <div className="flex items-center justify-center gap-0.5">
@@ -205,18 +211,13 @@ export function ClassInitialStatsBlock({
                                                         type="number"
                                                         defaultValue={Number.isFinite(cur) ? String(cur) : ""}
                                                         onBlur={(e) => commitInit(r, k, e.target.value)}
-                                                        title={
-                                                            drift ? `server template: ${templateStats?.[k]}` : undefined
-                                                        }
                                                         className={`mono w-12 rounded border bg-[var(--color-surface)] px-1 py-0.5 text-center text-[11px] outline-none focus:border-[var(--color-accent-2)] ${
                                                             drift
                                                                 ? "border-[var(--color-warning)] text-[var(--color-warning)]"
                                                                 : "border-[var(--color-border)]"
                                                         }`}
                                                     />
-                                                    {drift && (
-                                                        <span className="font-bold text-[var(--color-warning)]">!</span>
-                                                    )}
+                                                    {drift && <DriftMarker drift={drift} />}
                                                 </div>
                                             </td>
                                         );

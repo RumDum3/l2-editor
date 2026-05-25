@@ -4,9 +4,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::Manager;
 
-// Returns the first subdirectory of `parent` whose name matches `name`
-// case-insensitively. Useful for the L2 client where "Textures" / "textures"
-// / "TEXTURES" all coexist across installs.
 pub fn find_subdir_ci(parent: &Path, name: &str) -> Option<PathBuf> {
     let exact = parent.join(name);
     if exact.is_dir() {

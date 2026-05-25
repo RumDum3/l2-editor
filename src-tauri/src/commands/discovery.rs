@@ -74,6 +74,35 @@ pub fn read_server_protocols(data_root: String) -> Result<Vec<u32>, String> {
 }
 
 #[tauri::command]
+pub fn has_radar_map(client_root: String) -> bool {
+    let root = PathBuf::from(&client_root);
+    if !root.is_dir() {
+        return false;
+    }
+    let candidates = [
+        crate::util::find_subdir_ci(&root, "SysTextures"),
+        crate::util::find_subdir_ci(&root, "Textures"),
+    ];
+    for dir in candidates.into_iter().flatten() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for ent in entries.flatten() {
+            let Ok(ft) = ent.file_type() else { continue };
+            if !ft.is_file() {
+                continue;
+            }
+            if ent
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("L2_RadarMap.utx")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[tauri::command]
 pub fn discover_client_dats(client_root: String) -> Result<ClientDatPaths, String> {
     let root = PathBuf::from(&client_root);
     let scan_root = crate::util::find_subdir_ci(&root, "system").unwrap_or_else(|| root.clone());

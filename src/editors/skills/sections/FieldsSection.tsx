@@ -1,10 +1,12 @@
-import { AlertTriangle, Check, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useState } from "react";
+import type { Drift } from "../../../lib/drift";
 import { ipc } from "../../../lib/ipc";
 import { logger } from "../../../lib/logger";
 import { buildUpdatesForField, findMismatches, mappingForDatField, mappingForXmlTag } from "../../../lib/skillFieldMap";
 import { invalidateId, useSkillRows } from "../../../lib/skillRowCache";
 import { useSettings } from "../../../state/SettingsContext";
+import { DriftBadge } from "../../../components/Drift";
 import { widgetFor } from "../data/enums";
 import {
     catalogBySection,
@@ -47,10 +49,24 @@ export function FieldsSection({ skill, mutate }: { skill: Skill; mutate: (fn: ()
     const { skillgrp, refreshPendingClientEdits } = useSettings();
     const rows = useSkillRows(skillgrp.kind === "done" ? skill.id : null);
     const mismatches = rows ? findMismatches(skill, rows) : [];
-    const mismatchedTags = new Set<string>();
+    const driftByTag = new Map<string, Drift>();
     for (const m of mismatches) {
-        const xmlTag = mappingForDatField(m.datField)?.xmlField;
-        if (xmlTag) mismatchedTags.add(xmlTag);
+        const mapping = mappingForDatField(m.datField);
+        if (!mapping) continue;
+        const tag = mapping.xmlField;
+        const drift = driftByTag.get(tag) ?? {
+            subject: `skill #${skill.id}`,
+            clientSource: "Skillgrp.dat",
+            fields: []
+        };
+        drift.fields.push({
+            label: `${tag} @ level ${m.level}`,
+            server: String(m.expected),
+            client: m.actual == null ? null : String(m.actual),
+            kind: m.actual == null ? "missingInClient" : "mismatch",
+            note: `dat: ${m.datField}`
+        });
+        driftByTag.set(tag, drift);
     }
 
     const pushField = (datField: string) => {
@@ -83,9 +99,10 @@ export function FieldsSection({ skill, mutate }: { skill: Skill; mutate: (fn: ()
 
     const renderField = (f: (typeof skill.fields)[number]) => {
         const mapping = mappingForXmlTag(f.tag);
+        const drift = driftByTag.get(f.tag);
         const clientInfo =
-            mapping && mismatchedTags.has(f.tag)
-                ? { datField: mapping.datField, mismatched: true, onPush: () => pushField(mapping.datField) }
+            mapping && drift
+                ? { datField: mapping.datField, drift, onPush: () => pushField(mapping.datField) }
                 : null;
         return (
             <FieldRow
@@ -235,7 +252,7 @@ function AddFieldModal({
 
 type FieldClientInfo = {
     datField: string;
-    mismatched: boolean;
+    drift: Drift;
     onPush: () => void;
 };
 
@@ -333,11 +350,10 @@ function FieldRow({
 }
 
 function ClientInline({ info }: { info: FieldClientInfo }) {
-    if (!info.mismatched) return null;
+    if (info.drift.fields.length === 0) return null;
     return (
         <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-[10px]">
-            <AlertTriangle size={11} className="text-[var(--color-warning)]" aria-hidden />
-            <span className="text-[var(--color-warning)]">client out of sync</span>
+            <DriftBadge drift={info.drift} />
             <button
                 type="button"
                 onClick={info.onPush}

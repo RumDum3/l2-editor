@@ -1,7 +1,9 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { TemplateFile } from "../../../classes/model";
+import { compareValue, type Drift } from "../../../lib/drift";
 import { toggleStringSetMember, useStringSetMember } from "../../../lib/uiPrefs";
+import { DriftMarker } from "../../Drift";
 import { HelpIcon, Tooltip } from "../../Tooltip";
 import { templateHelpFor } from "./templateHelp";
 
@@ -189,7 +191,13 @@ function StaticNode({
 
     const text = (el.textContent ?? "").trim();
     const clientVal = clientStats?.get(el.tagName);
-    const drift = clientVal != null && Number(text) !== clientVal;
+    const driftField =
+        clientVal != null && Number(text) !== clientVal
+            ? compareValue({ label: el.tagName, server: Number(text), client: clientVal })
+            : null;
+    const drift: Drift | null = driftField
+        ? { clientSource: "ClassInfo.dat", fields: [driftField] }
+        : null;
     return (
         <div className="flex items-center gap-3" style={pad}>
             <FieldLabel tag={el.tagName} className={`${LBL} w-44 shrink-0`} />
@@ -203,15 +211,7 @@ function StaticNode({
                         });
                 }}
             />
-            {drift && (
-                <span
-                    className="font-bold text-[var(--color-warning)]"
-                    title={`differs from the client (ClassInfo.dat: ${clientVal})`}
-                    aria-label="out of sync with the client"
-                >
-                    !
-                </span>
-            )}
+            {drift && <DriftMarker drift={drift} />}
         </div>
     );
 }

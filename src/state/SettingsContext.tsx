@@ -8,6 +8,7 @@ import {
     type SkillgrpSummary,
     type SkillNameSummary
 } from "../lib/ipc";
+import { CHRONICLE } from "../lib/tier2Dats";
 import { logger } from "../lib/logger";
 import { invalidateAll as invalidateSkillRowCache } from "../lib/skillRowCache";
 import { invalidateAllSkillnames } from "../lib/skillNameRowCache";
@@ -67,6 +68,7 @@ type SettingsState = {
     setChronicleId: (id: string | null) => Promise<void>;
     chronicleDats: ChronicleDatEntry[] | null;
     availableSchemas: ReadonlySet<string> | null;
+    hasRadarMap: boolean;
 };
 
 const SettingsCtx = createContext<SettingsState | null>(null);
@@ -190,6 +192,27 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         if (!chronicleDats) return null;
         return new Set(chronicleDats.map((d) => d.schemaName.toLowerCase()));
     }, [chronicleDats]);
+
+    const [hasRadarMap, setHasRadarMap] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        const root = config?.clientRoot;
+        if (!root) {
+            setHasRadarMap(false);
+            return;
+        }
+        void ipc
+            .hasRadarMap(root)
+            .then((b) => {
+                if (!cancelled) setHasRadarMap(b);
+            })
+            .catch(() => {
+                if (!cancelled) setHasRadarMap(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [config?.clientRoot]);
     const setTier2DatPath = useCallback(
         (key: string, path: string) => {
             const next = { ...(config?.tier2DatPaths ?? {}), [key]: path };
@@ -228,14 +251,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (!loaded) return;
+        if (chronicles.length === 0) return;
         const root = config?.clientRoot;
-        if (root && root !== lastProbedRef.current) {
-            void probeProtocol(false);
-        } else if (!root) {
+        if (!root) {
             setProbe({ kind: "idle" });
             lastProbedRef.current = "";
+            return;
         }
-    }, [loaded, config?.clientRoot, probeProtocol]);
+        const explicit = config?.chronicleId;
+        if (explicit) {
+            const c = chronicles.find((x) => x.id.toLowerCase() === explicit.toLowerCase());
+            if (c && c.ordinal < CHRONICLE.ERTHEIA) {
+                setProbe({ kind: "idle" });
+                lastProbedRef.current = root;
+                return;
+            }
+        }
+        if (root !== lastProbedRef.current) {
+            void probeProtocol(false);
+        }
+    }, [loaded, config?.clientRoot, config?.chronicleId, chronicles, probeProtocol]);
 
     const [serverProtocols, setServerProtocols] = useState<ServerProtocolsState>({ kind: "idle" });
     const lastServerRootRef = useRef<string>("");
@@ -600,7 +635,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             chronicle,
             setChronicleId,
             chronicleDats,
-            availableSchemas
+            availableSchemas,
+            hasRadarMap
         }),
         [
             config,
@@ -630,7 +666,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             chronicle,
             setChronicleId,
             chronicleDats,
-            availableSchemas
+            availableSchemas,
+            hasRadarMap
         ]
     );
 

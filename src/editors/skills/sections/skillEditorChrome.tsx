@@ -1,8 +1,10 @@
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
+import { compareValue, type Drift, type DriftField } from "../../../lib/drift";
 import { ipc } from "../../../lib/ipc";
 import { logger } from "../../../lib/logger";
 import { findMismatches } from "../../../lib/skillFieldMap";
+import { DriftBadge } from "../../../components/Drift";
 import { invalidateSkillnameId, useSkillnameRows } from "../../../lib/skillNameRowCache";
 import { useSkillRows } from "../../../lib/skillRowCache";
 import { useSettings } from "../../../state/SettingsContext";
@@ -27,11 +29,23 @@ export function Header({
     const fieldMismatches = rows ? findMismatches(skill, rows).length : 0;
 
     const nameRows = useSkillnameRows(skillNames.kind === "done" ? skill.id : null);
-    const nameMismatched =
-        skillNames.kind === "done" &&
-        !!nameRows &&
-        nameRows.some((r) => (r.skill_sublevel ?? 0) === 0 && typeof r.name === "string" && r.name !== skill.name);
-    const totalMismatches = fieldMismatches + (nameMismatched ? 1 : 0);
+    const nameDrift = useMemo<Drift | null>(() => {
+        if (skillNames.kind !== "done" || !nameRows) return null;
+        const fields: DriftField[] = [];
+        for (const r of nameRows) {
+            if ((r.skill_sublevel ?? 0) !== 0) continue;
+            if (typeof r.name !== "string") continue;
+            const f = compareValue({
+                label: `name @ level ${r.skill_level}`,
+                server: skill.name,
+                client: r.name
+            });
+            if (f) fields.push({ ...f, note: "SkillName.dat row" });
+        }
+        if (fields.length === 0) return null;
+        return { subject: `skill #${skill.id}`, clientSource: "SkillName.dat", fields };
+    }, [skillNames.kind, nameRows, skill.id, skill.name]);
+    const totalMismatches = fieldMismatches + (nameDrift ? 1 : 0);
 
     const pushNameToClient = () => {
         if (skillNames.kind !== "done" || !skill.name) return;
@@ -86,10 +100,9 @@ export function Header({
                         onCommit={(v) => mutate(() => setRootAttr(skill, "name", v))}
                         help={rootHelpFor("name")}
                     />
-                    {nameMismatched && (
+                    {nameDrift && (
                         <div className="mt-0.5 flex items-center gap-1.5 pl-3 text-[10px]">
-                            <AlertTriangle size={11} className="text-[var(--color-warning)]" aria-hidden />
-                            <span className="text-[var(--color-warning)]">client SkillName out of sync</span>
+                            <DriftBadge drift={nameDrift} />
                             <button
                                 type="button"
                                 onClick={pushNameToClient}
@@ -214,7 +227,12 @@ export function ClassTreesSection({ skill }: { skill: Skill }) {
 }
 
 export function LintBanner({ skill }: { skill: Skill }) {
-    const issues = useMemo(() => lintSkill(skill), [skill]);
+    const { chronicle } = useSettings();
+    const chronicleOrdinal = chronicle?.ordinal ?? null;
+    const issues = useMemo(
+        () => lintSkill(skill, { chronicleOrdinal }),
+        [skill, chronicleOrdinal]
+    );
     const hasError = issues.some((i) => i.level === "error");
     const [open, setOpen] = useState(hasError);
     if (issues.length === 0) return null;

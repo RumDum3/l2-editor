@@ -54,6 +54,7 @@ export const ipc = {
     chronicleDats: (chronicleId: string) => invoke<ChronicleDatEntry[]>("chronicle_dats", { chronicleId }),
     readServerProtocols: (dataRoot: string) => invoke<number[]>("read_server_protocols", { dataRoot }),
     discoverClientDats: (clientRoot: string) => invoke<ClientDatPaths>("discover_client_dats", { clientRoot }),
+    hasRadarMap: (clientRoot: string) => invoke<boolean>("has_radar_map", { clientRoot }),
     importSkillNames: (path: string) => invoke<SkillNameSummary>("import_skill_names", { path }),
     readSkillnameSummary: () => invoke<SkillNameSummary | null>("read_skillname_summary"),
     lookupSkillnameRows: (skillIds: number[]) =>

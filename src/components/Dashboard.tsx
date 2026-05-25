@@ -15,9 +15,10 @@ export function Dashboard({
     onShowWorld: () => void;
     onShowNpcs: () => void;
 }) {
-    const { config } = useSettings();
+    const { config, hasRadarMap } = useSettings();
     const { selectCategory } = useEditor();
     const categories = PLUGINS.filter((p) => !!p.dataPath);
+    const worldEnabled = !config?.clientRoot || hasRadarMap;
 
     if (!config?.dataRoot) {
         return (
@@ -65,11 +66,23 @@ export function Dashboard({
                     </button>
                     <button
                         type="button"
-                        onClick={onShowWorld}
-                        className="flex h-32 flex-col items-start justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-left transition hover:border-[var(--color-accent-2)] hover:bg-[var(--color-surface-2)]"
+                        onClick={worldEnabled ? onShowWorld : undefined}
+                        disabled={!worldEnabled}
+                        title={
+                            worldEnabled
+                                ? undefined
+                                : "L2_RadarMap.utx not found under client SysTextures/ or Textures/"
+                        }
+                        className={`flex h-32 flex-col items-start justify-between rounded-lg border p-4 text-left transition ${
+                            worldEnabled
+                                ? "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent-2)] hover:bg-[var(--color-surface-2)]"
+                                : "cursor-not-allowed border-[var(--color-border)] bg-[var(--color-surface)] opacity-40"
+                        }`}
                     >
                         <div className="text-[14px] font-semibold text-[var(--color-text)]">World</div>
-                        <span className="mono text-[10px] text-[var(--color-text-faint)]">—</span>
+                        <span className="mono text-[10px] text-[var(--color-text-faint)]">
+                            {worldEnabled ? "—" : "no radar map"}
+                        </span>
                     </button>
                     <button
                         type="button"
