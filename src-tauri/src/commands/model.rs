@@ -81,10 +81,9 @@ const PACKAGE_EXTS: &[&str] = &["ukx", "utx", "usx", "unr", "u", "uax"];
 fn build_index(client_root: &Path) -> std::sync::Arc<PackageIndex> {
     let mut by_stem: HashMap<String, PathBuf> = HashMap::new();
     for sub in SCAN_SUBDIRS {
-        let dir = client_root.join(sub);
-        if !dir.is_dir() {
+        let Some(dir) = crate::util::find_subdir_ci(client_root, sub) else {
             continue;
-        }
+        };
         walk(&dir, &mut |path: &Path| {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else { return };
             let name_lc = name.to_ascii_lowercase();

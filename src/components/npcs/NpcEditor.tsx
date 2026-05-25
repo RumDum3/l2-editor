@@ -520,9 +520,6 @@ function ModelTab({ npcId }: { npcId: number }) {
                     <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-faint)]">
                         package reader · dev probe
                     </span>
-                    <span className="text-[10px] text-[var(--color-text-faint)]">
-                        (phase 1 — verify the UE2 parser works on your client)
-                    </span>
                 </div>
                 <div className="flex items-center gap-2">
                     <input

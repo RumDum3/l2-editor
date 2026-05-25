@@ -76,10 +76,7 @@ pub fn read_server_protocols(data_root: String) -> Result<Vec<u32>, String> {
 #[tauri::command]
 pub fn discover_client_dats(client_root: String) -> Result<ClientDatPaths, String> {
     let root = PathBuf::from(&client_root);
-    let scan_root = {
-        let sys = root.join("system");
-        if sys.is_dir() { sys } else { root.clone() }
-    };
+    let scan_root = crate::util::find_subdir_ci(&root, "system").unwrap_or_else(|| root.clone());
     if !scan_root.is_dir() {
         return Err(format!("not a folder: {}", scan_root.display()));
     }

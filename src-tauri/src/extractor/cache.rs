@@ -174,15 +174,14 @@ fn locate_package(
             None => true,
         };
         if needs_index {
-            let candidates: &[&str] = &["Textures", "textures", "SysTextures", "systextures"];
+            let candidates: &[&str] = &["Textures", "SysTextures"];
             let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
             idx.map.clear();
             for name in candidates {
-                let dir = client_root.join(name);
-                if !dir.is_dir() {
+                let Some(dir) = crate::util::find_subdir_ci(client_root, name) else {
                     continue;
-                }
+                };
                 let canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
                 if !seen.insert(canon) {
                     continue;

@@ -2,15 +2,33 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
+fn find_exe_ci(dir: &Path, name: &str) -> Option<PathBuf> {
+    let exact = dir.join(name);
+    if exact.is_file() {
+        return Some(exact);
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
+    for ent in entries.flatten() {
+        let Ok(ft) = ent.file_type() else { continue };
+        if !ft.is_file() {
+            continue;
+        }
+        if ent.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
+            return Some(ent.path());
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
 #[tauri::command]
 pub async fn probe_l2_protocol(client_root: String) -> Result<u32, String> {
     use std::time::Duration;
 
-    let dir = PathBuf::from(&client_root).join("system");
-    let exe = dir.join("L2.exe");
-    if !exe.is_file() {
-        return Err(format!("L2.exe not found at {}", exe.display()));
-    }
+    let root = PathBuf::from(&client_root);
+    let dir = crate::util::find_subdir_ci(&root, "system").unwrap_or_else(|| root.join("system"));
+    let exe = find_exe_ci(&dir, "L2.exe")
+        .ok_or_else(|| format!("L2.exe not found under {}", dir.display()))?;
 
     let pid = spawn_hidden(&exe, &dir).map_err(|e| format!("spawn L2.exe: {e}"))?;
 

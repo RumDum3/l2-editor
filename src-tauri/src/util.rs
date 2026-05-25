@@ -1,8 +1,30 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::Manager;
+
+// Returns the first subdirectory of `parent` whose name matches `name`
+// case-insensitively. Useful for the L2 client where "Textures" / "textures"
+// / "TEXTURES" all coexist across installs.
+pub fn find_subdir_ci(parent: &Path, name: &str) -> Option<PathBuf> {
+    let exact = parent.join(name);
+    if exact.is_dir() {
+        return Some(exact);
+    }
+    let entries = fs::read_dir(parent).ok()?;
+    let lc = name.to_ascii_lowercase();
+    for ent in entries.flatten() {
+        let Ok(ft) = ent.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        if ent.file_name().to_string_lossy().eq_ignore_ascii_case(&lc) {
+            return Some(ent.path());
+        }
+    }
+    None
+}
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or_else(|| "path has no parent".to_string())?;
