@@ -55,6 +55,8 @@ logs/
 
 # Project scratch
 dumped/
+scripts/zip.mjs
+CHANGELOG.md
 
 # Vite cache
 .vite/
