@@ -160,6 +160,60 @@ pub fn get_texture(
     Ok(Some(png))
 }
 
+pub fn get_texture_info(
+    state: &ExtractorState,
+    client_root: &Path,
+    package: &str,
+    name: &str,
+) -> Result<Result<super::texture::TextureInfo, String>, ExtractError> {
+    let utx_path = locate_package(state, client_root, package)?;
+    let Some(utx_path) = utx_path else {
+        return Ok(Err(format!("no .utx for package '{}'", package)));
+    };
+    let Some(pkg) = parse_cached(state, package, &utx_path)? else {
+        return Ok(Err(format!("parse_cached failed for {}", package)));
+    };
+    // L2 textures are commonly stored with `_ori` (diffuse) or `_sp` (specular) suffixes;
+    // NpcGrp.dat references the base name. Mirror the fallback the JS texture loader uses.
+    let lower = name.to_ascii_lowercase();
+    let mut candidates: Vec<String> = vec![name.to_string()];
+    if !lower.ends_with("_ori") && !lower.ends_with("_sp") {
+        candidates.push(format!("{}_ori", name));
+        candidates.push(format!("{}_sp", name));
+    }
+    let exports = pkg.texture_exports();
+    let summary = candidates
+        .iter()
+        .find_map(|cand| exports.iter().find(|t| t.name == *cand).cloned());
+    let Some(summary) = summary else {
+        return Ok(Err(format!(
+            "'{}' not in package {} (also tried {:?})",
+            name, package, &candidates[1..]
+        )));
+    };
+    let Some(export) = pkg.exports.get(summary.export_index as usize) else {
+        return Ok(Err(format!("export index {} out of range", summary.export_index)));
+    };
+    let resolved = summary.name.clone();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::texture::read_texture_info(&pkg, export)
+    })) {
+        Ok(Ok(mut info)) => {
+            info.resolved_name = resolved;
+            Ok(Ok(info))
+        }
+        Ok(Err(e)) => Ok(Err(format!("read_texture_info failed: {}", e))),
+        Err(panic) => {
+            let msg = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("(non-string panic)");
+            Ok(Err(format!("PANIC in read_texture_info: {}", msg)))
+        }
+    }
+}
+
 fn locate_package(
     state: &ExtractorState,
     client_root: &Path,

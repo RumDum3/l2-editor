@@ -88,6 +88,47 @@ pub fn extract_to_png(pkg: &Package, export: &ExportEntry) -> Result<Vec<u8>, Te
     rgba_to_png(dec.width, dec.height, dec.rgba)
 }
 
+#[derive(Debug, Clone)]
+pub struct TextureInfo {
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+    pub mip_count: i32,
+    pub mip0_size: u32,
+    pub resolved_name: String,
+}
+
+pub fn read_texture_info(pkg: &Package, export: &ExportEntry) -> Result<TextureInfo, TextureError> {
+    let bytes: &[u8] = &pkg.bytes;
+    let mut c = Cursor::new(bytes);
+    c.set_position(export.serial_offset as u64);
+    let props = properties::read(pkg, &mut c)?;
+    let format = props.format.unwrap_or(TextureFormat::P8);
+    skip_unk(&mut c, pkg.header.file_version, pkg.header.licensee_version)?;
+    let mip_count = read_compact_int(&mut c)?;
+    if mip_count <= 0 {
+        return Err(TextureError::NoMips);
+    }
+    let _next_offset = c.read_u32::<LittleEndian>()?;
+    let size = read_compact_int(&mut c)?;
+    if size <= 0 {
+        return Err(TextureError::NoMips);
+    }
+    c.set_position(c.position() + size as u64);
+    let width = c.read_u32::<LittleEndian>()?;
+    let height = c.read_u32::<LittleEndian>()?;
+    let final_w = if width > 0 { width } else { props.width };
+    let final_h = if height > 0 { height } else { props.height };
+    Ok(TextureInfo {
+        format,
+        width: final_w,
+        height: final_h,
+        mip_count,
+        mip0_size: size as u32,
+        resolved_name: String::new(),
+    })
+}
+
 pub fn rgba_to_png(width: u32, height: u32, rgba: Vec<u8>) -> Result<Vec<u8>, TextureError> {
     let img: ImageBuffer<Rgba<u8>, _> =
         ImageBuffer::from_vec(width, height, rgba).ok_or(TextureError::PngEncode)?;

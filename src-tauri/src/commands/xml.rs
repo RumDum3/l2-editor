@@ -26,6 +26,16 @@ pub fn write_xml(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    if let Some(parent) = Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        }
+    }
+    fs::write(&path, &bytes).map_err(|e| format!("write {path}: {e}"))
+}
+
+#[tauri::command]
 pub fn list_xml_files(folder: String, recursive: Option<bool>) -> Result<Vec<XmlFileEntry>, String> {
     let dir = Path::new(&folder);
     if !dir.is_dir() {

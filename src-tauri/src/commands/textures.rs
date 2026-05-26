@@ -29,6 +29,45 @@ pub fn read_texture(
         .map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureInfo {
+    pub package: String,
+    pub name: String,
+    pub resolved_name: String,
+    pub format: String,
+    pub width: u32,
+    pub height: u32,
+    pub mip_count: i32,
+    pub mip0_size: u32,
+}
+
+#[tauri::command]
+pub fn texture_info(
+    state: tauri::State<ExtractorState>,
+    client_root: String,
+    package: String,
+    name: String,
+) -> Result<TextureInfo, String> {
+    if client_root.is_empty() {
+        return Err("client_root not set".to_string());
+    }
+    let client = PathBuf::from(client_root);
+    let info = extractor::cache::get_texture_info(&state, &client, &package, &name)
+        .map_err(|e| e.to_string())?;
+    let info = info.map_err(|msg| msg)?;
+    Ok(TextureInfo {
+        package: package.clone(),
+        name: name.clone(),
+        resolved_name: info.resolved_name,
+        format: format!("{:?}", info.format),
+        width: info.width,
+        height: info.height,
+        mip_count: info.mip_count,
+        mip0_size: info.mip0_size,
+    })
+}
+
 #[tauri::command]
 pub fn list_textures(
     state: tauri::State<ExtractorState>,

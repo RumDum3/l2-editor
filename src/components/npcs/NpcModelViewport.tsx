@@ -1,8 +1,16 @@
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import type { MeshData } from "../../lib/ipc";
+import { ipc, type MeshData } from "../../lib/ipc";
+import { logger } from "../../lib/logger";
+import {
+    bytesFromArrayBuffer,
+    bytesFromString,
+    exportMeshAsGlb,
+    exportMeshAsObj
+} from "../../lib/meshExport";
 import { listTextures, loadTexture } from "../../lib/textureCache";
 
 type RenderMode = "auto" | "mesh" | "points" | "wireframe";
@@ -126,6 +134,38 @@ export function NpcModelViewport({
         };
     }, [firstTex?.package, firstTex?.name, clientRoot, resolvedTextures.length]);
 
+    const [exportBusy, setExportBusy] = useState<"glb" | "obj" | null>(null);
+    const safeName = (mesh.exportName || "mesh").replace(/[^A-Za-z0-9_.-]+/g, "_");
+    const exportAs = async (format: "glb" | "obj") => {
+        if (exportBusy) return;
+        const filters =
+            format === "glb"
+                ? [{ name: "glTF Binary", extensions: ["glb"] }]
+                : [{ name: "Wavefront OBJ", extensions: ["obj"] }];
+        const target = await saveDialog({
+            defaultPath: `${safeName}.${format}`,
+            filters
+        });
+        if (!target) return;
+        setExportBusy(format);
+        try {
+            if (format === "glb") {
+                const buf = await exportMeshAsGlb(mesh, texture);
+                await ipc.writeBinaryFile(target as string, bytesFromArrayBuffer(buf));
+                logger.info("mesh-export", `wrote glb`, { path: target, bytes: buf.byteLength });
+            } else {
+                const text = exportMeshAsObj(mesh);
+                await ipc.writeBinaryFile(target as string, bytesFromString(text));
+                logger.info("mesh-export", `wrote obj`, { path: target, bytes: text.length });
+            }
+        } catch (e) {
+            logger.warn("mesh-export", `failed`, { format, err: String(e) });
+            console.error(`[mesh-export ${format}]`, e);
+        } finally {
+            setExportBusy(null);
+        }
+    };
+
     const camDistance = cloudInfo.radius * 2.2;
     return (
         <>
@@ -162,6 +202,34 @@ export function NpcModelViewport({
                     texture {textureEnabled ? "on" : "off"}
                 </button>
             )}
+            <div className="flex gap-0.5 rounded border border-[var(--color-border)] bg-black/60 p-0.5">
+                <button
+                    type="button"
+                    onClick={() => void exportAs("glb")}
+                    disabled={!!exportBusy}
+                    title="Export the mesh as glTF binary (.glb) — opens cleanly in Blender via File > Import > glTF 2.0"
+                    className={`rounded px-1.5 py-0.5 ${
+                        exportBusy === "glb"
+                            ? "text-[var(--color-accent)]"
+                            : "text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                    } ${exportBusy ? "opacity-60" : ""}`}
+                >
+                    {exportBusy === "glb" ? "exporting…" : "glb"}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => void exportAs("obj")}
+                    disabled={!!exportBusy}
+                    title="Export the mesh as Wavefront .obj (vertices + UVs only, no skeleton or material)"
+                    className={`rounded px-1.5 py-0.5 ${
+                        exportBusy === "obj"
+                            ? "text-[var(--color-accent)]"
+                            : "text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                    } ${exportBusy ? "opacity-60" : ""}`}
+                >
+                    {exportBusy === "obj" ? "exporting…" : "obj"}
+                </button>
+            </div>
         </div>
         <div className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/70 px-2 py-1 font-mono text-[10px] text-[var(--color-text-faint)]">
             tex: {texStatus}

@@ -26,7 +26,7 @@ use commands::skillgrp::{
 };
 use commands::textures::{
     clear_texture_cache, list_map_regions, list_textures, read_region_terrain_texture,
-    read_texture,
+    read_texture, texture_info,
 };
 use commands::chronicle::{chronicle_dats, infer_chronicle, list_chronicles};
 use commands::model::{
@@ -35,7 +35,7 @@ use commands::model::{
 };
 use commands::npc::{load_npc_xml, save_npc_xml};
 use commands::spawns::save_spawn_edits;
-use commands::xml::{list_xml_files, read_xml, write_xml};
+use commands::xml::{list_xml_files, read_xml, write_binary_file, write_xml};
 use commands::zones::save_zone_edits;
 use extractor::cache::ExtractorState;
 
@@ -55,8 +55,10 @@ pub fn run() {
             write_ui_prefs,
             read_xml,
             write_xml,
+            write_binary_file,
             list_xml_files,
             read_texture,
+            texture_info,
             list_textures,
             list_map_regions,
             read_region_terrain_texture,

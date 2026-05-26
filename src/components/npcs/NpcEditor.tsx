@@ -19,6 +19,7 @@ import { SkillInspectorProvider, useInspectSkill } from "../classes/SkillInspect
 import { NpcModelViewport } from "./NpcModelViewport";
 import { NpcFieldDrift } from "./NpcFieldDrift";
 import { NpcImplementBanner } from "./NpcImplementBanner";
+import { TextureInfoModal, type TextureRef } from "./TextureInfoModal";
 import { useNpcClientRow, type NpcClientRowState } from "../../lib/npcClientRow";
 import { CHRONICLE } from "../../lib/tier2Dats";
 
@@ -397,6 +398,8 @@ function ModelTab({ npcId }: { npcId: number }) {
     const [autoMesh, setAutoMesh] = useState<Awaited<ReturnType<typeof ipc.loadSkeletalMesh>> | null>(null);
     const [autoMeshError, setAutoMeshError] = useState<string | null>(null);
     const [datTextures, setDatTextures] = useState<string[]>([]);
+    const [datTextureRefs, setDatTextureRefs] = useState<TextureRef[]>([]);
+    const [textureModalOpen, setTextureModalOpen] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -407,6 +410,7 @@ function ModelTab({ npcId }: { npcId: number }) {
         setAutoMesh(null);
         setAutoMeshError(null);
         setDatTextures([]);
+        setDatTextureRefs([]);
         if (!clientRoot || !npcId) return;
         (async () => {
             setResolving(true);
@@ -425,6 +429,18 @@ function ModelTab({ npcId }: { npcId: number }) {
                     ? (row["texture_name_second"] as unknown[]).filter((s): s is string => typeof s === "string" && s.length > 0)
                     : [];
                 setDatTextures([...texPrimary, ...texSecond]);
+                const refs: TextureRef[] = [];
+                for (const s of texPrimary) {
+                    const dot = s.indexOf(".");
+                    if (dot < 0) continue;
+                    refs.push({ package: s.slice(0, dot), name: s.slice(dot + 1), role: "primary" });
+                }
+                for (const s of texSecond) {
+                    const dot = s.indexOf(".");
+                    if (dot < 0) continue;
+                    refs.push({ package: s.slice(0, dot), name: s.slice(dot + 1), role: "secondary" });
+                }
+                setDatTextureRefs(refs);
                 const mn = typeof row["mesh_name"] === "string" ? (row["mesh_name"] as string) : "";
                 if (!mn) {
                     setMeshNameMissing(true);
@@ -517,26 +533,39 @@ function ModelTab({ npcId }: { npcId: number }) {
                     </div>
                 )}
                 {autoMesh && (
-                    <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-[var(--color-text-faint)]">
-                        {(autoMesh.positions.length / 3).toLocaleString()} verts · decoder{" "}
-                        <span
-                            className={
-                                autoMesh.decoderConfidence === "verified"
-                                    ? "text-[var(--color-accent)]"
-                                    : "text-[var(--color-warning)]"
-                            }
-                        >
-                            {autoMesh.decoder}
-                        </span>
-                        {autoMesh.decoderConfidence !== "verified" && " (tentative)"}
-                        <span className="ml-2">
-                            · tex {datTextures.length > 0 ? datTextures.length : autoMesh.textures.length}
-                            {datTextures[0]
-                                ? ` (${datTextures[0]}${datTextures.length > 1 ? ` +${datTextures.length - 1}` : ""})`
-                                : autoMesh.textures[0]
-                                ? ` (${autoMesh.textures[0].package}.${autoMesh.textures[0].name})`
-                                : ""}
-                        </span>
+                    <div className="absolute left-2 top-2 flex flex-col gap-1 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-[var(--color-text-faint)]">
+                        <div>
+                            {(autoMesh.positions.length / 3).toLocaleString()} verts · decoder{" "}
+                            <span
+                                className={
+                                    autoMesh.decoderConfidence === "verified"
+                                        ? "text-[var(--color-accent)]"
+                                        : "text-[var(--color-warning)]"
+                                }
+                            >
+                                {autoMesh.decoder}
+                            </span>
+                            {autoMesh.decoderConfidence !== "verified" && " (tentative)"}
+                            <span className="ml-2">
+                                · tex {datTextures.length > 0 ? datTextures.length : autoMesh.textures.length}
+                                {datTextures[0]
+                                    ? ` (${datTextures[0]}${datTextures.length > 1 ? ` +${datTextures.length - 1}` : ""})`
+                                    : autoMesh.textures[0]
+                                    ? ` (${autoMesh.textures[0].package}.${autoMesh.textures[0].name})`
+                                    : ""}
+                            </span>
+                            {datTextureRefs.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTextureModalOpen(true)}
+                                    className="ml-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-[1px] text-[10px] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)] hover:text-[var(--color-text)]"
+                                    title="View details for each texture (resolution, format, mip levels)"
+                                >
+                                    details
+                                </button>
+                            )}
+                        </div>
+                        <MeshStatsLine mesh={autoMesh} />
                     </div>
                 )}
                 {autoMesh && autoMesh.decoderConfidence !== "verified" && (
@@ -688,6 +717,75 @@ function ModelTab({ npcId }: { npcId: number }) {
                 )}
             </div>
             )}
+            <TextureInfoModal
+                open={textureModalOpen}
+                onClose={() => setTextureModalOpen(false)}
+                textures={datTextureRefs}
+                clientRoot={clientRoot}
+                npcId={npcId}
+                title="Texture details"
+            />
+        </div>
+    );
+}
+
+function MeshStatsLine({ mesh }: { mesh: Awaited<ReturnType<typeof ipc.loadSkeletalMesh>> }) {
+    const verts = mesh.positions.length / 3;
+    const tris = Math.floor(mesh.triangleWedges.length / 3);
+    const bones = mesh.bones.length;
+    const influences = mesh.influences.length;
+    const softSections = mesh.debugInfo.softSectionMaterials.length;
+    const rigidSections = mesh.debugInfo.rigidSectionMaterials.length;
+    const b = mesh.bounds;
+    const dimW = Math.abs(b.max[0] - b.min[0]);
+    const dimH = Math.abs(b.max[2] - b.min[2]);
+    const dimD = Math.abs(b.max[1] - b.min[1]);
+    const fmt = (n: number) => (n >= 100 ? n.toFixed(0) : n.toFixed(1));
+    const avgInf = verts > 0 ? (influences / verts).toFixed(2) : "0";
+    const parts: { label: string; value: string; title?: string }[] = [
+        {
+            label: "tris",
+            value: tris.toLocaleString(),
+            title: `${tris.toLocaleString()} triangles drawn from ${verts.toLocaleString()} wedges`
+        }
+    ];
+    if (bones > 0) {
+        parts.push({
+            label: "bones",
+            value: bones.toLocaleString(),
+            title: `${bones} bones in the reference skeleton`
+        });
+    }
+    if (influences > 0) {
+        parts.push({
+            label: "infls",
+            value: `${influences.toLocaleString()} (${avgInf}/v)`,
+            title: `${influences} non-zero bone weights across all vertices · avg ${avgInf} bones per vertex`
+        });
+    }
+    if (softSections > 0 || rigidSections > 0) {
+        parts.push({
+            label: "sects",
+            value: `${softSections}s / ${rigidSections}r`,
+            title: `${softSections} soft (skinned) section${softSections === 1 ? "" : "s"} + ${rigidSections} rigid section${rigidSections === 1 ? "" : "s"}`
+        });
+    }
+    if (dimW > 0 || dimH > 0 || dimD > 0) {
+        parts.push({
+            label: "bbox",
+            value: `${fmt(dimW)}×${fmt(dimH)}×${fmt(dimD)}`,
+            title: `Axis-aligned bounding box: ${fmt(dimW)} wide × ${fmt(dimH)} tall × ${fmt(dimD)} deep (UE units)`
+        });
+    }
+    return (
+        <div className="text-[var(--color-text-faint)]/80">
+            {parts.map((p, i) => (
+                <span key={p.label} title={p.title}>
+                    {i > 0 && " · "}
+                    {p.label}{" "}
+                    <span className="text-[var(--color-text-faint)]">{p.value}</span>
+                </span>
+            ))}
         </div>
     );
 }

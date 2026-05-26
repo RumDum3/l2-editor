@@ -45,6 +45,7 @@ export const ipc = {
     writeUiPrefs: (prefs: Record<string, unknown>) => invoke<void>("write_ui_prefs", { prefs }),
     readXml: (path: string) => invoke<string>("read_xml", { path }),
     writeXml: (path: string, content: string) => invoke<void>("write_xml", { path, content }),
+    writeBinaryFile: (path: string, bytes: number[]) => invoke<void>("write_binary_file", { path, bytes }),
     listXmlFiles: (folder: string, recursive = false) =>
         invoke<XmlFileEntry[]>("list_xml_files", { folder, recursive }),
     loadWorldSpawns: (dataRoot: string) => invoke<WorldSpawns>("load_world_spawns", { dataRoot }),
@@ -94,6 +95,8 @@ export const ipc = {
         invoke<number | null>("add_skillname_row", { skillId, level, name }),
     presentSkillIds: () => invoke<number[]>("present_skill_ids"),
     presentSkillnameIds: () => invoke<number[]>("present_skillname_ids"),
+    textureInfo: (clientRoot: string, packageName: string, name: string) =>
+        invoke<TextureInfo>("texture_info", { clientRoot, package: packageName, name }),
     pendingSkillIds: () => invoke<number[]>("pending_skill_ids"),
     saveSkillgrp: (targetPath: string) => invoke<DatSaveResult>("save_skillgrp", { targetPath }),
     loadDat: (path: string) => invoke<LoadedDat>("load_dat", { path }),
@@ -120,6 +123,17 @@ export const ipc = {
         invoke<MeshData>("load_skeletal_mesh", { clientRoot, meshName }),
     dumpMeshPayload: (clientRoot: string, meshName: string, nbytes?: number, offsetAfterProps?: number) =>
         invoke<MeshHexDump>("dump_mesh_payload", { clientRoot, meshName, nbytes, offsetAfterProps })
+};
+
+export type TextureInfo = {
+    package: string;
+    name: string;
+    resolvedName: string;
+    format: string;
+    width: number;
+    height: number;
+    mipCount: number;
+    mip0Size: number;
 };
 
 export type MeshHexDump = {
