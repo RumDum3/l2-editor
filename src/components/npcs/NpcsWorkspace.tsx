@@ -117,8 +117,13 @@ export function NpcsWorkspace({
 
     const [query, setQuery] = useState("");
     const [typeFilter, setTypeFilter] = useState<string>("");
+    const [driftFilter, setDriftFilter] = useState<"any" | "missing" | "mismatch" | "none">("any");
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const clientLoaded = clientNpcs.size > 0;
+    const missingCount = useMemo(
+        () => rows.filter((r) => r.drift.fields.some((f) => f.kind === "missingInClient")).length,
+        [rows]
+    );
 
     const types = useMemo(() => {
         const set = new Set<string>();
@@ -130,13 +135,20 @@ export function NpcsWorkspace({
         const q = query.trim().toLowerCase();
         return rows.filter((r) => {
             if (typeFilter && r.info.type !== typeFilter) return false;
+            if (driftFilter !== "any") {
+                const hasMissing = r.drift.fields.some((f) => f.kind === "missingInClient");
+                const hasMismatch = r.drift.fields.some((f) => f.kind === "mismatch");
+                if (driftFilter === "missing" && !hasMissing) return false;
+                if (driftFilter === "mismatch" && !hasMismatch) return false;
+                if (driftFilter === "none" && r.drift.fields.length > 0) return false;
+            }
             if (!q) return true;
             if (r.info.name.toLowerCase().includes(q)) return true;
             if (String(r.info.id).includes(q)) return true;
             if (r.info.type.toLowerCase().includes(q)) return true;
             return false;
         });
-    }, [rows, query, typeFilter]);
+    }, [rows, query, typeFilter, driftFilter]);
 
     const selected = useMemo(() => rows.find((r) => r.info.id === selectedId) ?? null, [rows, selectedId]);
     const [editVariantId, setEditVariantId] = useState<number | null>(null);
@@ -289,6 +301,36 @@ export function NpcsWorkspace({
                             {filtered.length} / {rows.length}
                         </span>
                     </div>
+                    {clientLoaded && (
+                        <div className="flex items-center gap-1">
+                            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                                drift
+                            </span>
+                            {(["any", "missing", "mismatch", "none"] as const).map((opt) => (
+                                <button
+                                    key={opt}
+                                    type="button"
+                                    onClick={() => setDriftFilter(opt)}
+                                    className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                        driftFilter === opt
+                                            ? "border-[var(--color-accent-2)] bg-[var(--color-surface-2)] text-[var(--color-accent)]"
+                                            : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)]"
+                                    }`}
+                                    title={
+                                        opt === "missing"
+                                            ? `Show NPCs not present in NpcName.dat (${missingCount})`
+                                            : opt === "mismatch"
+                                            ? "Show NPCs whose name disagrees with NpcName.dat"
+                                            : opt === "none"
+                                            ? "Show NPCs fully in sync with the client"
+                                            : "Show all NPCs"
+                                    }
+                                >
+                                    {opt === "missing" && missingCount > 0 ? `${opt} (${missingCount})` : opt}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     {!clientLoaded && (
                         <div
                             className="text-[10px] text-[var(--color-text-faint)]"

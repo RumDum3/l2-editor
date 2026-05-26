@@ -1,8 +1,11 @@
 import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { type ClassSkillTrees, completeClassSkills, loadClassSkillTrees } from "../editors/skills/data/skillTrees";
+import { ipc } from "../lib/ipc";
 import { useEditor } from "../state/EditorContext";
 import { useSettings } from "../state/SettingsContext";
+
+type SkillImplState = "any" | "missing-grp" | "missing-name" | "missing-either" | "implemented";
 
 const PAGE_SIZE = 60;
 
@@ -13,6 +16,69 @@ export function CardGrid() {
     const [page, setPage] = useState(0);
     const [classTrees, setClassTrees] = useState<ClassSkillTrees | "loading" | null>(null);
     const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
+    const [implFilter, setImplFilter] = useState<SkillImplState>("any");
+    const [presentGrp, setPresentGrp] = useState<Set<number> | null>(null);
+    const [presentName, setPresentName] = useState<Set<number> | null>(null);
+
+    const skillsActive = loaded?.plugin.id === "skills";
+    const grpReady = skillgrp.kind === "done";
+    const nameReady = skillNames.kind === "done";
+
+    useEffect(() => {
+        if (!skillsActive || !grpReady) {
+            setPresentGrp(null);
+            return;
+        }
+        let cancelled = false;
+        ipc.presentSkillIds()
+            .then((ids) => {
+                if (!cancelled) setPresentGrp(new Set(ids));
+            })
+            .catch(() => {
+                if (!cancelled) setPresentGrp(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [skillsActive, grpReady]);
+
+    useEffect(() => {
+        if (!skillsActive || !nameReady) {
+            setPresentName(null);
+            return;
+        }
+        let cancelled = false;
+        ipc.presentSkillnameIds()
+            .then((ids) => {
+                if (!cancelled) setPresentName(new Set(ids));
+            })
+            .catch(() => {
+                if (!cancelled) setPresentName(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [skillsActive, nameReady]);
+
+    const missingGrpCount = useMemo(() => {
+        if (!skillsActive || !presentGrp || !loaded) return 0;
+        let n = 0;
+        for (const e of loaded.index) {
+            const id = typeof e.summary.id === "number" ? e.summary.id : Number(e.summary.id);
+            if (Number.isFinite(id) && !presentGrp.has(id)) n += 1;
+        }
+        return n;
+    }, [skillsActive, presentGrp, loaded]);
+
+    const missingNameCount = useMemo(() => {
+        if (!skillsActive || !presentName || !loaded) return 0;
+        let n = 0;
+        for (const e of loaded.index) {
+            const id = typeof e.summary.id === "number" ? e.summary.id : Number(e.summary.id);
+            if (Number.isFinite(id) && !presentName.has(id)) n += 1;
+        }
+        return n;
+    }, [skillsActive, presentName, loaded]);
 
     useEffect(() => {
         if (loaded?.plugin.id !== "skills" || !config?.dataRoot) {
@@ -97,15 +163,34 @@ export function CardGrid() {
         const q = deferredFilter.trim().toLowerCase();
         const inClass = (id: string | number) =>
             !classFilterSet || classFilterSet.has(typeof id === "number" ? id : Number(id));
+        const matchesImpl = (id: string | number): boolean => {
+            if (!skillsActive || implFilter === "any") return true;
+            const n = typeof id === "number" ? id : Number(id);
+            if (!Number.isFinite(n)) return false;
+            const inGrp = presentGrp?.has(n) ?? true;
+            const inName = presentName?.has(n) ?? true;
+            switch (implFilter) {
+                case "missing-grp":
+                    return !inGrp;
+                case "missing-name":
+                    return !inName;
+                case "missing-either":
+                    return !inGrp || !inName;
+                case "implemented":
+                    return inGrp && inName;
+            }
+            return true;
+        };
         const out: { entry: (typeof loaded.index)[number]; idx: number }[] = [];
         for (let i = 0; i < loaded.index.length; i++) {
             const e = loaded.index[i];
             if (q && !e.searchKey.includes(q)) continue;
             if (!inClass(e.summary.id)) continue;
+            if (!matchesImpl(e.summary.id)) continue;
             out.push({ entry: e, idx: i });
         }
         return out;
-    }, [loaded, deferredFilter, classFilterSet]);
+    }, [loaded, deferredFilter, classFilterSet, skillsActive, implFilter, presentGrp, presentName]);
 
     useEffect(() => {
         const last = Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1);
@@ -189,6 +274,62 @@ export function CardGrid() {
                                 </option>
                             ))}
                     </select>
+                )}
+                {loaded.plugin.id === "skills" && (presentGrp || presentName) && (
+                    <div className="flex items-center gap-1">
+                        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                            client
+                        </span>
+                        {(
+                            [
+                                { id: "any", label: "any", count: null as number | null },
+                                {
+                                    id: "missing-grp",
+                                    label: "missing skillgrp",
+                                    count: presentGrp ? missingGrpCount : null
+                                },
+                                {
+                                    id: "missing-name",
+                                    label: "missing skillname",
+                                    count: presentName ? missingNameCount : null
+                                },
+                                {
+                                    id: "missing-either",
+                                    label: "missing either",
+                                    count: null
+                                },
+                                { id: "implemented", label: "implemented", count: null }
+                            ] as { id: SkillImplState; label: string; count: number | null }[]
+                        ).map((opt) => (
+                            <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => {
+                                    setImplFilter(opt.id);
+                                    setPage(0);
+                                }}
+                                title={
+                                    opt.id === "missing-grp"
+                                        ? "Server XML skills with no row in Skillgrp.dat"
+                                        : opt.id === "missing-name"
+                                          ? "Server XML skills with no row in SkillName.dat"
+                                          : opt.id === "missing-either"
+                                            ? "Server XML skills missing from at least one client dat"
+                                            : opt.id === "implemented"
+                                              ? "Server XML skills present in both Skillgrp.dat and SkillName.dat"
+                                              : "Show all skills"
+                                }
+                                className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                    implFilter === opt.id
+                                        ? "border-[var(--color-accent-2)] bg-[var(--color-surface-2)] text-[var(--color-accent)]"
+                                        : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)]"
+                                }`}
+                            >
+                                {opt.label}
+                                {opt.count != null && opt.count > 0 && ` (${opt.count})`}
+                            </button>
+                        ))}
+                    </div>
                 )}
                 <span className="text-[11px] text-[var(--color-text-faint)]">
                     {visible.length.toLocaleString()} / {loaded.index.length.toLocaleString()} · {loaded.files.length}{" "}

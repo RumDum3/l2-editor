@@ -88,6 +88,12 @@ export const ipc = {
         invoke<Record<number, ClientSkillRow[]>>("lookup_skill_rows", { skillIds }),
     applySkillEdits: (skillId: number, updates: ClientFieldUpdate[]) =>
         invoke<number>("apply_skill_edits", { skillId, updates }),
+    addSkillRow: (skillId: number, level: number) =>
+        invoke<number | null>("add_skill_row", { skillId, level }),
+    addSkillnameRow: (skillId: number, level: number, name: string) =>
+        invoke<number | null>("add_skillname_row", { skillId, level, name }),
+    presentSkillIds: () => invoke<number[]>("present_skill_ids"),
+    presentSkillnameIds: () => invoke<number[]>("present_skillname_ids"),
     pendingSkillIds: () => invoke<number[]>("pending_skill_ids"),
     saveSkillgrp: (targetPath: string) => invoke<DatSaveResult>("save_skillgrp", { targetPath }),
     loadDat: (path: string) => invoke<LoadedDat>("load_dat", { path }),

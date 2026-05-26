@@ -178,6 +178,38 @@ pub fn apply_skill_edits(
 }
 
 #[tauri::command]
+pub fn present_skill_ids(app: tauri::AppHandle) -> Result<Vec<u32>, String> {
+    if !app.state::<SkillgrpRuntime>().is_loaded() {
+        return Ok(Vec::new());
+    }
+    dat_db::present_ids(&skillgrp_db_path(&app)?)
+}
+
+#[tauri::command]
+pub fn add_skill_row(
+    app: tauri::AppHandle,
+    skill_id: u32,
+    level: i64,
+) -> Result<Option<u32>, String> {
+    if !app.state::<SkillgrpRuntime>().is_loaded() {
+        return Err("skillgrp not loaded — import first".to_string());
+    }
+    let db = skillgrp_db_path(&app)?;
+    let mut overrides = serde_json::Map::new();
+    overrides.insert("skill_id".to_string(), serde_json::Value::from(skill_id as i64));
+    overrides.insert("skill_level".to_string(), serde_json::Value::from(level));
+    overrides.insert("skill_sublevel".to_string(), serde_json::Value::from(0i64));
+    let new_id = dat_db::add_row(&db, &serde_json::Map::new(), &overrides)?;
+    if new_id.is_some() {
+        app.state::<SkillgrpRuntime>().with_mut(|loaded| {
+            loaded.dirty.insert(skill_id);
+            loaded.summary.row_count = loaded.summary.row_count.saturating_add(1);
+        });
+    }
+    Ok(new_id)
+}
+
+#[tauri::command]
 pub fn pending_skill_ids(
     runtime: tauri::State<'_, SkillgrpRuntime>,
 ) -> Result<Vec<u32>, String> {

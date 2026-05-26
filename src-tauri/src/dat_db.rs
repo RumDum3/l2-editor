@@ -236,6 +236,24 @@ pub fn distinct_values(path: &Path, field: &str) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
+pub fn present_ids(path: &Path) -> Result<Vec<u32>, String> {
+    let conn = open(path)?;
+    let mut st = conn
+        .prepare("SELECT DISTINCT id FROM rows WHERE id IS NOT NULL ORDER BY id")
+        .map_err(|e| format!("prepare present ids: {e}"))?;
+    let it = st
+        .query_map([], |r| r.get::<_, i64>(0))
+        .map_err(|e| format!("query present ids: {e}"))?;
+    let mut out: Vec<u32> = Vec::new();
+    for row in it {
+        let v = row.map_err(|e| format!("read present id: {e}"))?;
+        if v >= 0 {
+            out.push(v as u32);
+        }
+    }
+    Ok(out)
+}
+
 pub fn dump_tree(path: &Path) -> Result<(Value, String, u32), String> {
     let conn = open(path)?;
     let m = read_all_meta(&conn)?;

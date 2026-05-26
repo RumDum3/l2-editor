@@ -17,6 +17,9 @@ import { regionOf } from "../../lib/worldCoords";
 import { useSettings } from "../../state/SettingsContext";
 import { SkillInspectorProvider, useInspectSkill } from "../classes/SkillInspector";
 import { NpcModelViewport } from "./NpcModelViewport";
+import { NpcFieldDrift } from "./NpcFieldDrift";
+import { NpcImplementBanner } from "./NpcImplementBanner";
+import { useNpcClientRow, type NpcClientRowState } from "../../lib/npcClientRow";
 import { CHRONICLE } from "../../lib/tier2Dats";
 
 interface Props {
@@ -104,6 +107,7 @@ function NpcEditorInner({
     }));
     const canUndo = history.idx > 0;
     const canRedo = history.idx >= 0 && history.idx < history.snapshots.length - 1;
+    const clientRow = useNpcClientRow(npcId);
 
     useEffect(() => {
         onDirtyChange(dirty);
@@ -319,6 +323,7 @@ function NpcEditorInner({
                             spawns={spawns}
                             bosses={bosses}
                             skillCatalog={skillCatalog}
+                            clientRow={clientRow}
                         />
                     );
                 })()}
@@ -335,7 +340,8 @@ function TabBody({
     revision,
     spawns,
     bosses,
-    skillCatalog
+    skillCatalog,
+    clientRow
 }: {
     tab: Tab;
     npc: Element;
@@ -345,8 +351,9 @@ function TabBody({
     spawns: SpawnPoint[];
     bosses: Array<{ npcId: number; x: number; y: number; respawn: string }>;
     skillCatalog: Map<number, SkillBrief> | null;
+    clientRow: NpcClientRowState;
 }) {
-    const ctx = useMemo(() => ({ npc, mutate }), [npc, mutate, revision]);
+    const ctx = useMemo(() => ({ npc, mutate, npcId, clientRow }), [npc, mutate, npcId, clientRow, revision]);
     switch (tab) {
         case "identity":
             return <IdentityTab {...ctx} />;
@@ -1081,18 +1088,68 @@ function SpawnsTab({
 interface TabProps {
     npc: Element;
     mutate: (fn: (npc: Element) => void) => void;
+    npcId: number;
+    clientRow: NpcClientRowState;
 }
 
-function IdentityTab({ npc, mutate }: TabProps) {
+function IdentityTab({ npc, mutate, npcId, clientRow }: TabProps) {
+    const serverName = npc.getAttribute("name") ?? "";
+    const serverTitle = npc.getAttribute("title") ?? "";
+    const clientName = typeof clientRow.npcName?.["name"] === "string" ? (clientRow.npcName!["name"] as string) : null;
+    const clientNick = typeof clientRow.npcName?.["nick"] === "string" ? (clientRow.npcName!["nick"] as string) : null;
+    const npcNameMissing = !clientRow.loading && clientRow.npcName === null;
     return (
         <Section title="Identity">
+            {npcNameMissing && (
+                <NpcImplementBanner
+                    datKey="npc_name"
+                    datLabel="NpcName.dat"
+                    npcId={npcId}
+                    indexField="id"
+                    overrides={{ name: serverName, nick: serverTitle }}
+                    note={`server name "${serverName}"${serverTitle ? `, title "${serverTitle}"` : ""}`}
+                    onImplemented={clientRow.refetch}
+                />
+            )}
             <Grid>
                 <ReadOnlyField label="id" value={npc.getAttribute("id") ?? ""} />
                 <AttrField label="displayId" attr="displayId" npc={npc} mutate={mutate} type="number" />
                 <AttrField label="level" attr="level" npc={npc} mutate={mutate} type="number" />
                 <AttrSelect label="type" attr="type" npc={npc} mutate={mutate} options={NPC_TYPES} />
-                <AttrField label="name" attr="name" npc={npc} mutate={mutate} type="text" />
-                <AttrField label="title" attr="title" npc={npc} mutate={mutate} type="text" />
+                <div>
+                    <AttrField label="name" attr="name" npc={npc} mutate={mutate} type="text" />
+                    <NpcFieldDrift
+                        spec={{
+                            label: "name",
+                            serverValue: serverName,
+                            clientValue: clientName,
+                            datKey: "npc_name",
+                            datField: "name",
+                            locator: { id: npcId },
+                            clientSource: "NpcName.dat"
+                        }}
+                        npcId={npcId}
+                        onPushed={clientRow.refetch}
+                        loading={clientRow.loading}
+                    />
+                </div>
+                <div>
+                    <AttrField label="title" attr="title" npc={npc} mutate={mutate} type="text" />
+                    <NpcFieldDrift
+                        spec={{
+                            label: "title",
+                            serverValue: serverTitle,
+                            clientValue: clientNick,
+                            datKey: "npc_name",
+                            datField: "nick",
+                            locator: { id: npcId },
+                            clientSource: "NpcName.dat (nick)"
+                        }}
+                        npcId={npcId}
+                        onPushed={clientRow.refetch}
+                        loading={clientRow.loading}
+                    />
+                </div>
                 <AttrBool label="usingServerSideName" attr="usingServerSideName" npc={npc} mutate={mutate} />
                 <AttrBool label="usingServerSideTitle" attr="usingServerSideTitle" npc={npc} mutate={mutate} />
             </Grid>

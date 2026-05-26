@@ -14,6 +14,7 @@ import { EffectsSection } from "./sections/EffectsSection";
 import { Section } from "./widgets/fieldPrimitives";
 import { FieldsSection } from "./sections/FieldsSection";
 import { ClassTreesSection, Header, LintBanner } from "./sections/skillEditorChrome";
+import { SkillImplementBanners } from "./sections/SkillImplementBanners";
 import {
     addAttachSkill,
     addSkillVariable,
@@ -135,6 +136,7 @@ export function SkillEditor({ entity: skill, mutate, revision }: Props) {
                 key={`h:${revision}:${skill.id}`}
             />
             <LintBanner skill={skill} key={`l:${revision}:${skill.id}`} />
+            <SkillImplementBanners skill={skill} key={`i:${revision}:${skill.id}`} />
             <ClientText skill={skill} />
             <ClassTreesSection skill={skill} />
             <EnchantVariants skill={skill} key={`e:${revision}:${skill.id}`} />

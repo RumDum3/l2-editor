@@ -16,12 +16,13 @@ use commands::generic_dat::{
 };
 use commands::l2_probe::probe_l2_protocol;
 use commands::skill_name::{
-    apply_skillname_edits, import_skill_names, lookup_skillname_rows, pending_skillname_ids,
-    read_skillname_summary, save_skillname, SkillNameRuntime,
+    add_skillname_row, apply_skillname_edits, import_skill_names, lookup_skillname_rows,
+    pending_skillname_ids, present_skillname_ids, read_skillname_summary, save_skillname,
+    SkillNameRuntime,
 };
 use commands::skillgrp::{
-    apply_skill_edits, import_skillgrp, lookup_skill_rows, pending_skill_ids,
-    read_skillgrp_summary, save_skillgrp, SkillgrpRuntime,
+    add_skill_row, apply_skill_edits, import_skillgrp, lookup_skill_rows, pending_skill_ids,
+    present_skill_ids, read_skillgrp_summary, save_skillgrp, SkillgrpRuntime,
 };
 use commands::textures::{
     clear_texture_cache, list_map_regions, list_textures, read_region_terrain_texture,
@@ -68,6 +69,8 @@ pub fn run() {
             read_skillname_summary,
             lookup_skillname_rows,
             apply_skillname_edits,
+            add_skillname_row,
+            present_skillname_ids,
             save_skillname,
             pending_skillname_ids,
             set_skill_to_level,
@@ -86,6 +89,8 @@ pub fn run() {
             read_skillgrp_summary,
             lookup_skill_rows,
             apply_skill_edits,
+            add_skill_row,
+            present_skill_ids,
             pending_skill_ids,
             save_skillgrp,
             load_dat,
