@@ -6,6 +6,17 @@ const PROP_TYPE_STRUCT: u8 = 9;
 
 // Walks the UObject tagged-property stream until the terminating "None" name.
 pub fn skip_property_block(c: &mut Cursor, names: &[String]) -> Result<(), PackageError> {
+    let _ = read_property_block(c, names)?;
+    Ok(())
+}
+
+#[derive(Default, Debug)]
+pub struct PropertySummary {
+    pub material_refs: Vec<i32>,
+}
+
+pub fn read_property_block(c: &mut Cursor, names: &[String]) -> Result<PropertySummary, PackageError> {
+    let mut out = PropertySummary::default();
     loop {
         let name_idx = c.read_compact_index()?;
         let i = name_idx as usize;
@@ -16,8 +27,9 @@ pub fn skip_property_block(c: &mut Cursor, names: &[String]) -> Result<(), Packa
                 len: names.len(),
             });
         }
-        if names[i].eq_ignore_ascii_case("None") {
-            return Ok(());
+        let prop_name = &names[i];
+        if prop_name.eq_ignore_ascii_case("None") {
+            return Ok(out);
         }
 
         let info = c.read_u8()?;
@@ -54,8 +66,28 @@ pub fn skip_property_block(c: &mut Cursor, names: &[String]) -> Result<(), Packa
             }
         }
 
-        if ptype != PROP_TYPE_BOOL {
-            c.skip(size)?;
+        if ptype == PROP_TYPE_BOOL {
+            continue;
+        }
+
+        let value_start = c.position();
+        let value_end = value_start + size;
+
+        if prop_name.eq_ignore_ascii_case("Materials")
+            || prop_name.eq_ignore_ascii_case("Textures")
+            || prop_name.eq_ignore_ascii_case("Skins")
+        {
+            let count = c.read_compact_index().unwrap_or(0).max(0) as usize;
+            let mut guard = 0usize;
+            while c.position() < value_end && guard < count {
+                let r = c.read_compact_index().unwrap_or(0);
+                out.material_refs.push(r);
+                guard += 1;
+            }
+        }
+
+        if c.position() < value_end {
+            c.skip(value_end - c.position())?;
         }
     }
 }

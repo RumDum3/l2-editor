@@ -126,27 +126,46 @@ export async function loadTexture(file: string, clientRoot: string): Promise<Tex
     }
     const key = `${ref.package}/${ref.name}`;
     const existing = cache.get(key);
-    if (existing && existing.status !== "error") {
+    if (existing && existing.status === "loaded") {
         logger.debug("texture", `js-cache hit ${file}`, { status: existing.status });
         return existing;
+    }
+    if (existing && existing.status !== "loaded") {
+        cache.delete(key);
     }
 
     set(key, { status: "loading", url: null });
     const t0 = performance.now();
     try {
-        const result = await withSlot(() =>
-            invoke<number[] | null>("read_texture", {
-                clientRoot,
-                package: ref.package,
-                name: ref.name
-            })
-        );
+        const candidates: string[] = [ref.name];
+        const lower = ref.name.toLowerCase();
+        if (!lower.endsWith("_ori") && !lower.endsWith("_sp")) {
+            candidates.push(`${ref.name}_ori`, `${ref.name}_sp`);
+        }
+        let result: number[] | null = null;
+        let usedName = ref.name;
+        for (const candidate of candidates) {
+            result = await withSlot(() =>
+                invoke<number[] | null>("read_texture", {
+                    clientRoot,
+                    package: ref.package,
+                    name: candidate
+                })
+            );
+            if (result) {
+                usedName = candidate;
+                break;
+            }
+        }
         const ms = Math.round(performance.now() - t0);
         if (!result) {
             const e: TextureEntry = { status: "missing", url: null };
             set(key, e);
-            logger.debug("texture", `missing ${file}`, { ms });
+            logger.debug("texture", `missing ${file} (tried ${candidates.join(", ")})`, { ms });
             return e;
+        }
+        if (usedName !== ref.name) {
+            logger.debug("texture", `resolved ${file} via fallback to ${usedName}`, {});
         }
         const bytes = new Uint8Array(result);
         const isJpg = bytes[0] === 0xff && bytes[1] === 0xd8;

@@ -151,6 +151,16 @@ export type MeshData = {
     influences: Array<{ vertexIndex: number; boneIndex: number; weight: number }>;
     serialEnd: number;
     cursorEnd: number;
+    decoder: string;
+    decoderConfidence: "verified" | "tentative" | "unknown";
+    l2WalkerError: string | null;
+    textures: Array<{ package: string; name: string }>;
+    debugInfo: {
+        softSectionMaterials: number[];
+        rigidSectionMaterials: number[];
+        propertyMaterialRefs: number[];
+        textureImportCount: number;
+    };
 };
 
 export type PackageIndexSummary = {

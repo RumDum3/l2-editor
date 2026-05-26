@@ -174,7 +174,7 @@ fn locate_package(
             None => true,
         };
         if needs_index {
-            let candidates: &[&str] = &["Textures", "SysTextures"];
+            let candidates: &[&str] = &["Textures", "SysTextures", "Animations"];
             let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
             idx.map.clear();

@@ -1,10 +1,39 @@
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { MeshData } from "../../lib/ipc";
+import { listTextures, loadTexture } from "../../lib/textureCache";
 
-export function NpcModelViewport({ mesh }: { mesh: MeshData }) {
+type RenderMode = "auto" | "mesh" | "points" | "wireframe";
+
+export function NpcModelViewport({
+    mesh,
+    clientRoot,
+    textureOverrides = []
+}: {
+    mesh: MeshData;
+    clientRoot: string;
+    textureOverrides?: string[];
+}) {
+    const resolvedTextures = useMemo(() => {
+        if (textureOverrides.length > 0) {
+            return textureOverrides
+                .map((s) => {
+                    const dot = s.indexOf(".");
+                    if (dot < 0) return null;
+                    return { package: s.slice(0, dot), name: s.slice(dot + 1) };
+                })
+                .filter((x): x is { package: string; name: string } => x !== null);
+        }
+        return mesh.textures;
+    }, [textureOverrides, mesh.textures]);
+    const hasTriangles = mesh.triangleWedges.length >= 3;
+    const [mode, setMode] = useState<RenderMode>("auto");
+    const [textureEnabled, setTextureEnabled] = useState<boolean>(true);
+    const effectiveMode: RenderMode =
+        mode === "auto" ? (hasTriangles ? "mesh" : "points") : mode;
+    const availableModes: RenderMode[] = hasTriangles ? ["mesh", "wireframe", "points"] : ["points"];
     const cloudInfo = useMemo(() => {
         const p = mesh.positions;
         if (p.length === 0) {
@@ -26,13 +55,117 @@ export function NpcModelViewport({ mesh }: { mesh: MeshData }) {
         const cz = (minZ + maxZ) / 2;
         const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
         const radius = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz) / 2, 1);
-        // -PI/2 X rotation maps mesh Z to three.js Y.
         const worldCenter: [number, number, number] = [cx, cz, -cy];
         return { center: worldCenter, radius };
     }, [mesh.positions]);
 
+    const firstTex = resolvedTextures[0];
+    const [texture, setTexture] = useState<THREE.Texture | null>(null);
+    const [texStatus, setTexStatus] = useState<string>("none");
+    useEffect(() => {
+        let cancelled = false;
+        setTexture(null);
+        if (!firstTex) {
+            setTexStatus(`no refs (${resolvedTextures.length})`);
+            return;
+        }
+        if (!clientRoot) {
+            setTexStatus("no clientRoot");
+            return;
+        }
+        const file = `${firstTex.package}.${firstTex.name}`;
+        setTexStatus(`loading ${file}`);
+        loadTexture(file, clientRoot).then(async (entry) => {
+            if (cancelled) return;
+            if (!entry.url) {
+                setTexStatus(`${entry.status}: ${file}`);
+                try {
+                    const all = await listTextures(firstTex.package, clientRoot);
+                    console.log(
+                        `[texture] ${firstTex.package} has ${all.length} entries; first 30:`,
+                        all.slice(0, 30)
+                    );
+                    const needle = firstTex.name.toLowerCase();
+                    const matches = all.filter((n) => n.toLowerCase().includes(needle.split("_")[0]));
+                    if (matches.length > 0) {
+                        console.log(`[texture] possible matches for "${needle}":`, matches);
+                    }
+                } catch (e) {
+                    console.log(`[texture] listTextures failed: ${e}`);
+                }
+                return;
+            }
+            const loader = new THREE.TextureLoader();
+            console.log(`[mesh-tex] data url length: ${entry.url.length}, starting THREE decode`);
+            loader.load(
+                entry.url,
+                (t) => {
+                    if (cancelled) {
+                        t.dispose();
+                        return;
+                    }
+                    t.colorSpace = THREE.SRGBColorSpace;
+                    t.wrapS = THREE.RepeatWrapping;
+                    t.wrapT = THREE.RepeatWrapping;
+                    t.flipY = false;
+                    t.needsUpdate = true;
+                    setTexture(t);
+                    const status = `ok ${file} (${t.image?.width}x${t.image?.height})`;
+                    setTexStatus(status);
+                    console.log(`[mesh-tex] ${status}`);
+                },
+                undefined,
+                (err) => {
+                    console.error(`[mesh-tex] decode err`, err);
+                    setTexStatus(`decode err ${file}`);
+                }
+            );
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [firstTex?.package, firstTex?.name, clientRoot, resolvedTextures.length]);
+
     const camDistance = cloudInfo.radius * 2.2;
     return (
+        <>
+        <div className="pointer-events-auto absolute right-2 top-2 z-10 flex gap-1 text-[10px]">
+            {availableModes.length > 1 && (
+                <div className="flex gap-0.5 rounded border border-[var(--color-border)] bg-black/60 p-0.5">
+                    {availableModes.map((m) => (
+                        <button
+                            key={m}
+                            type="button"
+                            onClick={() => setMode(m)}
+                            className={`rounded px-1.5 py-0.5 ${
+                                effectiveMode === m
+                                    ? "bg-[var(--color-accent-2)]/30 text-[var(--color-accent)]"
+                                    : "text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                            }`}
+                        >
+                            {m}
+                        </button>
+                    ))}
+                </div>
+            )}
+            {resolvedTextures.length > 0 && (
+                <button
+                    type="button"
+                    onClick={() => setTextureEnabled((v) => !v)}
+                    className={`rounded border border-[var(--color-border)] bg-black/60 px-1.5 py-1 ${
+                        textureEnabled
+                            ? "text-[var(--color-accent)]"
+                            : "text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                    }`}
+                    title={texStatus}
+                >
+                    texture {textureEnabled ? "on" : "off"}
+                </button>
+            )}
+        </div>
+        <div className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/70 px-2 py-1 font-mono text-[10px] text-[var(--color-text-faint)]">
+            tex: {texStatus}
+        </div>
         <Canvas
             dpr={[1, 2]}
             style={{ background: "black" }}
@@ -54,10 +187,82 @@ export function NpcModelViewport({ mesh }: { mesh: MeshData }) {
             <gridHelper args={[cloudInfo.radius * 4, 20, "#222", "#181818"]} position={[0, 0, 0]} />
             <axesHelper args={[cloudInfo.radius * 0.5]} />
             <group rotation={[-Math.PI / 2, 0, 0]}>
-                <PointCloud positions={mesh.positions} />
+                {effectiveMode === "points" && <PointCloud positions={mesh.positions} />}
+                {(effectiveMode === "mesh" || effectiveMode === "wireframe") && (
+                    <SolidMesh
+                        positions={mesh.positions}
+                        indices={mesh.triangleWedges}
+                        uvs={mesh.wedgeUvs}
+                        wireframe={effectiveMode === "wireframe"}
+                        texture={textureEnabled ? texture : null}
+                    />
+                )}
                 <BoundsBox min={mesh.bounds.min} max={mesh.bounds.max} />
             </group>
         </Canvas>
+        </>
+    );
+}
+
+function SolidMesh({
+    positions,
+    indices,
+    uvs,
+    wireframe,
+    texture
+}: {
+    positions: number[];
+    indices: number[];
+    uvs: number[];
+    wireframe: boolean;
+    texture: THREE.Texture | null;
+}) {
+    const geometry = useMemo(() => {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+        const expectedUvs = (positions.length / 3) * 2;
+        const hasUvs = uvs.length > 0 && uvs.length === expectedUvs;
+        if (hasUvs) {
+            g.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
+        }
+        let uvMin = Infinity, uvMax = -Infinity, uvAllZero = true;
+        for (let i = 0; i < Math.min(uvs.length, 200); i++) {
+            const v = uvs[i];
+            if (v < uvMin) uvMin = v;
+            if (v > uvMax) uvMax = v;
+            if (v !== 0) uvAllZero = false;
+        }
+        console.log(
+            `[mesh-geom] verts=${positions.length / 3}, uvs=${uvs.length}/${expectedUvs}, hasUvs=${hasUvs}, uv range=[${uvMin.toFixed(3)}, ${uvMax.toFixed(3)}], allZero=${uvAllZero}`
+        );
+        const indexBuf =
+            indices.length > 0 && Math.max(...indices) < 65535
+                ? new Uint16Array(indices)
+                : new Uint32Array(indices);
+        g.setIndex(new THREE.BufferAttribute(indexBuf, 1));
+        g.computeVertexNormals();
+        g.computeBoundingSphere();
+        return g;
+    }, [positions, indices, uvs]);
+    const useTex = !wireframe && texture !== null;
+    return (
+        <mesh geometry={geometry} key={useTex ? `tex-${texture?.uuid}` : "no-tex"}>
+            {useTex ? (
+                <meshBasicMaterial
+                    map={texture}
+                    side={THREE.DoubleSide}
+                />
+            ) : (
+                <meshStandardMaterial
+                    color={wireframe ? "#7dd3fc" : "#cbd5e1"}
+                    wireframe={wireframe}
+                    flatShading={!wireframe}
+                    side={THREE.DoubleSide}
+                    metalness={0.05}
+                    roughness={0.65}
+                />
+            )}
+        </mesh>
     );
 }
 

@@ -389,6 +389,7 @@ function ModelTab({ npcId }: { npcId: number }) {
     const [meshNameMissing, setMeshNameMissing] = useState(false);
     const [autoMesh, setAutoMesh] = useState<Awaited<ReturnType<typeof ipc.loadSkeletalMesh>> | null>(null);
     const [autoMeshError, setAutoMeshError] = useState<string | null>(null);
+    const [datTextures, setDatTextures] = useState<string[]>([]);
 
     useEffect(() => {
         let cancelled = false;
@@ -398,6 +399,7 @@ function ModelTab({ npcId }: { npcId: number }) {
         setMeshNameMissing(false);
         setAutoMesh(null);
         setAutoMeshError(null);
+        setDatTextures([]);
         if (!clientRoot || !npcId) return;
         (async () => {
             setResolving(true);
@@ -409,6 +411,13 @@ function ModelTab({ npcId }: { npcId: number }) {
                     setMeshNameMissing(true);
                     return;
                 }
+                const texPrimary = Array.isArray(row["texture_name"])
+                    ? (row["texture_name"] as unknown[]).filter((s): s is string => typeof s === "string" && s.length > 0)
+                    : [];
+                const texSecond = Array.isArray(row["texture_name_second"])
+                    ? (row["texture_name_second"] as unknown[]).filter((s): s is string => typeof s === "string" && s.length > 0)
+                    : [];
+                setDatTextures([...texPrimary, ...texSecond]);
                 const mn = typeof row["mesh_name"] === "string" ? (row["mesh_name"] as string) : "";
                 if (!mn) {
                     setMeshNameMissing(true);
@@ -484,7 +493,7 @@ function ModelTab({ npcId }: { npcId: number }) {
                 data-npc-model-viewport
             >
                 {autoMesh ? (
-                    <NpcModelViewport mesh={autoMesh} />
+                    <NpcModelViewport mesh={autoMesh} clientRoot={clientRoot} textureOverrides={datTextures} />
                 ) : autoMeshError ? (
                     <div className="p-4 text-[11px] text-[var(--color-danger)]">
                         Decode failed: {autoMeshError}
@@ -502,7 +511,48 @@ function ModelTab({ npcId }: { npcId: number }) {
                 )}
                 {autoMesh && (
                     <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-[var(--color-text-faint)]">
-                        {(autoMesh.positions.length / 3).toLocaleString()} verts — drag to orbit, scroll to zoom
+                        {(autoMesh.positions.length / 3).toLocaleString()} verts · decoder{" "}
+                        <span
+                            className={
+                                autoMesh.decoderConfidence === "verified"
+                                    ? "text-[var(--color-accent)]"
+                                    : "text-[var(--color-warning)]"
+                            }
+                        >
+                            {autoMesh.decoder}
+                        </span>
+                        {autoMesh.decoderConfidence !== "verified" && " (tentative)"}
+                        <span className="ml-2">
+                            · tex {datTextures.length > 0 ? datTextures.length : autoMesh.textures.length}
+                            {datTextures[0]
+                                ? ` (${datTextures[0]}${datTextures.length > 1 ? ` +${datTextures.length - 1}` : ""})`
+                                : autoMesh.textures[0]
+                                ? ` (${autoMesh.textures[0].package}.${autoMesh.textures[0].name})`
+                                : ""}
+                        </span>
+                    </div>
+                )}
+                {autoMesh && autoMesh.decoderConfidence !== "verified" && (
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-2 rounded bg-[var(--color-warning)]/10 px-2 py-1 text-[10px] text-[var(--color-warning)]">
+                        <span className="flex-1">
+                            Tentative decoder. {autoMesh.l2WalkerError ?? "Click below to copy the first 256 raw bytes for analysis."}
+                        </span>
+                        {import.meta.env.DEV && (
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (!meshName) return;
+                                    try {
+                                        const d = await ipc.dumpMeshPayload(clientRoot, meshName, 256, 0);
+                                        const text = `package: ${d.exportName}\noffset: ${d.payloadStart}\n\n${d.hex}\n${d.ascii}\n--- u32 ---\n${d.u32Grid}\n--- f32 ---\n${d.f32Grid}`;
+                                        await navigator.clipboard.writeText(text);
+                                    } catch {}
+                                }}
+                                className="shrink-0 rounded border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-warning)] hover:bg-[var(--color-warning)]/20"
+                            >
+                                copy raw bytes
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -515,6 +565,7 @@ function ModelTab({ npcId }: { npcId: number }) {
                 meshName={meshName}
                 meshNameMissing={meshNameMissing}
             />
+            {import.meta.env.DEV && (
             <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
                 <div className="mb-2 flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-faint)]">
@@ -629,6 +680,7 @@ function ModelTab({ npcId }: { npcId: number }) {
                     </div>
                 )}
             </div>
+            )}
         </div>
     );
 }
@@ -687,7 +739,10 @@ function ResolvedModelPanel({
     };
     const dumpAfterPositions = async () => {
         if (!mesh) return;
-        const offset = 8 + (mesh.positions.length / 3) * 6;
+        const vertCount = mesh.positions.length / 3;
+        const headerBytes = 8;
+        const transformBlockBytes = mesh.decoder === "l2_packed_i16" && resolved?.packageVersion != null && resolved.packageVersion < 130 ? 40 : 0;
+        const offset = headerBytes + transformBlockBytes + vertCount * 6;
         await dumpPayloadAt(offset, 1024);
     };
     const dumpPayloadAt = async (offsetAfterProps: number, nbytes = 1024) => {
@@ -751,7 +806,7 @@ function ResolvedModelPanel({
                     )}
                     <div className="flex items-center gap-2 pt-1">
                         <StatusPill status={resolved.status} detail={resolved.detail} />
-                        {resolved.status === "ok" && (
+                        {resolved.status === "ok" && import.meta.env.DEV && (
                             <>
                                 <button
                                     type="button"

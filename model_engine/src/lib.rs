@@ -1,7 +1,11 @@
 pub mod cursor;
+pub mod mesh;
 pub mod package;
-pub mod skeletal_mesh;
+pub mod ue2_types;
 pub mod uobject;
 
+pub use mesh::{
+    decode_skeletal_mesh, dump_after_properties, BoneInfluence, Bounds, DecoderConfidence, HexDump,
+    MeshBone, MeshData, MeshDebugInfo, MeshDecodeError, MeshMaterial, MeshTextureRef,
+};
 pub use package::{ExportEntry, ImportEntry, Package, PackageError, PackageHeader, PackageSummary};
-pub use skeletal_mesh::{decode_skeletal_mesh, dump_after_properties, HexDump, MeshData, MeshDecodeError};
