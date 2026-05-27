@@ -97,6 +97,25 @@ export const ipc = {
     presentSkillnameIds: () => invoke<number[]>("present_skillname_ids"),
     textureInfo: (clientRoot: string, packageName: string, name: string) =>
         invoke<TextureInfo>("texture_info", { clientRoot, package: packageName, name }),
+    replaceTextureWithPng: (
+        clientRoot: string,
+        packageName: string,
+        name: string,
+        pngPath: string
+    ) =>
+        invoke<ReplaceTextureResult>("replace_texture_with_png", {
+            clientRoot,
+            package: packageName,
+            name,
+            pngPath
+        }),
+    upscaleTexture: (clientRoot: string, packageName: string, name: string, factor: number) =>
+        invoke<ReplaceTextureResult>("upscale_texture", {
+            clientRoot,
+            package: packageName,
+            name,
+            factor
+        }),
     pendingSkillIds: () => invoke<number[]>("pending_skill_ids"),
     saveSkillgrp: (targetPath: string) => invoke<DatSaveResult>("save_skillgrp", { targetPath }),
     loadDat: (path: string) => invoke<LoadedDat>("load_dat", { path }),
@@ -123,6 +142,13 @@ export const ipc = {
         invoke<MeshData>("load_skeletal_mesh", { clientRoot, meshName }),
     dumpMeshPayload: (clientRoot: string, meshName: string, nbytes?: number, offsetAfterProps?: number) =>
         invoke<MeshHexDump>("dump_mesh_payload", { clientRoot, meshName, nbytes, offsetAfterProps })
+};
+
+export type ReplaceTextureResult = {
+    utxPath: string;
+    bytesWritten: number;
+    mipsReplaced: number;
+    backupPath: string | null;
 };
 
 export type TextureInfo = {
@@ -175,6 +201,13 @@ export type MeshData = {
     decoderConfidence: "verified" | "tentative" | "unknown";
     l2WalkerError: string | null;
     textures: Array<{ package: string; name: string }>;
+    sections: Array<{
+        kind: "soft" | "rigid";
+        firstIndex: number;
+        indexCount: number;
+        materialIndex: number;
+        textureIndex: number;
+    }>;
     debugInfo: {
         softSectionMaterials: number[];
         rigidSectionMaterials: number[];

@@ -214,6 +214,17 @@ pub fn get_texture_info(
     }
 }
 
+pub fn locate_package_for_write(
+    state: &ExtractorState,
+    client_root: &Path,
+    package: &str,
+) -> Option<PathBuf> {
+    match locate_package(state, client_root, package) {
+        Ok(p) => p,
+        Err(_) => None,
+    }
+}
+
 fn locate_package(
     state: &ExtractorState,
     client_root: &Path,

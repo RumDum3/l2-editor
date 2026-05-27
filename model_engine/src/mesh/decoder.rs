@@ -1,7 +1,7 @@
 use crate::cursor::Cursor;
 use crate::mesh::data::{
     BoneInfluence, Bounds, DecoderConfidence, MeshBone, MeshData, MeshDebugInfo, MeshDecodeError,
-    MeshMaterial,
+    MeshMaterial, MeshSection,
 };
 use crate::mesh::l2_walker::{read_l2_skeletal_mesh, L2SkeletalMeshRaw};
 use crate::mesh::textures;
@@ -70,6 +70,8 @@ pub fn decode_skeletal_mesh(pkg: &Package, export: &ExportEntry) -> Result<MeshD
         }
     }
 
+    let sections = build_sections(l2_raw_ok);
+
     let debug_info = MeshDebugInfo {
         soft_section_materials: soft_mats,
         rigid_section_materials: rigid_mats,
@@ -95,8 +97,49 @@ pub fn decode_skeletal_mesh(pkg: &Package, export: &ExportEntry) -> Result<MeshD
         decoder_confidence: geom.confidence,
         l2_walker_error,
         textures: texs,
+        sections,
         debug_info,
     })
+}
+
+fn build_sections(raw: Option<&L2SkeletalMeshRaw>) -> Vec<MeshSection> {
+    let Some(raw) = raw else { return Vec::new() };
+    let Some(lod) = raw.lod_models.first() else { return Vec::new() };
+    let soft_count = lod.soft_sections.len();
+    let mut out: Vec<MeshSection> = Vec::with_capacity(soft_count + lod.rigid_sections.len());
+    let soft_indices_len = lod.soft_indices.len() as u32;
+    // L2 leaves min_stream_index / num_stream_indices as sentinel/vertex-count values.
+    // The authoritative triangle range is first_face * 3 .. (first_face + num_faces) * 3.
+    // Sections are paired with NpcGrp.dat's texture_name array by ordinal position.
+    for (i, s) in lod.soft_sections.iter().enumerate() {
+        let first = s.first_face as u32 * 3;
+        let count = s.num_faces as u32 * 3;
+        if count == 0 {
+            continue;
+        }
+        out.push(MeshSection {
+            kind: "soft",
+            first_index: first,
+            index_count: count,
+            material_index: s.material_index as u32,
+            texture_index: i as i32,
+        });
+    }
+    for (j, s) in lod.rigid_sections.iter().enumerate() {
+        let first = soft_indices_len + s.first_face as u32 * 3;
+        let count = s.num_faces as u32 * 3;
+        if count == 0 {
+            continue;
+        }
+        out.push(MeshSection {
+            kind: "rigid",
+            first_index: first,
+            index_count: count,
+            material_index: s.material_index as u32,
+            texture_index: (soft_count + j) as i32,
+        });
+    }
+    out
 }
 
 struct Geom {

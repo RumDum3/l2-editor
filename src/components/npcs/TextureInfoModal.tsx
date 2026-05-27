@@ -1,6 +1,8 @@
-import { X } from "lucide-react";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ArrowUp, Download, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ipc, type TextureInfo } from "../../lib/ipc";
+import { logger } from "../../lib/logger";
 import { loadTexture } from "../../lib/textureCache";
 
 export interface TextureRef {
@@ -34,6 +36,7 @@ export function TextureInfoModal({
     title?: string;
 }) {
     const [rows, setRows] = useState<RowState[]>([]);
+    const [refreshTick, setRefreshTick] = useState(0);
 
     useEffect(() => {
         if (!open) return;
@@ -82,7 +85,7 @@ export function TextureInfoModal({
         return () => {
             cancelled = true;
         };
-    }, [open, textures, clientRoot]);
+    }, [open, textures, clientRoot, refreshTick]);
 
     if (!open) return null;
 
@@ -120,7 +123,12 @@ export function TextureInfoModal({
                     )}
                     <div className="flex flex-col gap-3">
                         {rows.map((r, i) => (
-                            <TextureRow key={`${r.ref.package}.${r.ref.name}-${i}`} row={r} />
+                            <TextureRow
+                                key={`${r.ref.package}.${r.ref.name}-${i}`}
+                                row={r}
+                                clientRoot={clientRoot}
+                                onApplied={() => setRefreshTick((t) => t + 1)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -134,7 +142,15 @@ export function TextureInfoModal({
     );
 }
 
-function TextureRow({ row }: { row: RowState }) {
+function TextureRow({
+    row,
+    clientRoot,
+    onApplied
+}: {
+    row: RowState;
+    clientRoot: string;
+    onApplied: () => void;
+}) {
     return (
         <div className="flex gap-4 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
             <div className="flex h-32 w-32 shrink-0 items-center justify-center overflow-hidden rounded border border-[var(--color-border)] bg-black/40">
@@ -198,9 +214,159 @@ function TextureRow({ row }: { row: RowState }) {
                         />
                     )}
                 </div>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                    <ExportPngButton row={row} />
+                    <ReplaceFromPngButton row={row} clientRoot={clientRoot} onApplied={onApplied} />
+                    <UpscaleButton row={row} clientRoot={clientRoot} onApplied={onApplied} />
+                </div>
             </div>
         </div>
     );
+}
+
+function ExportPngButton({ row }: { row: RowState }) {
+    const [busy, setBusy] = useState(false);
+    const disabled = busy || !row.pngUrl;
+    const name = row.info?.resolvedName || row.ref.name;
+    const onClick = async () => {
+        if (!row.pngUrl) return;
+        setBusy(true);
+        try {
+            const target = await saveDialog({
+                title: "Export texture as PNG",
+                defaultPath: `${row.ref.package}.${name}.png`,
+                filters: [{ name: "PNG", extensions: ["png"] }]
+            });
+            if (!target || typeof target !== "string") return;
+            const bytes = base64DataUrlToBytes(row.pngUrl);
+            await ipc.writeBinaryFile(target, Array.from(bytes));
+            logger.info("texture-export", `wrote ${target}`, { bytes: bytes.length });
+        } catch (e) {
+            logger.warn("texture-export", "failed", { err: String(e) });
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)] hover:text-[var(--color-text)] disabled:opacity-40"
+            title="Save the decoded RGBA8 PNG to disk for external editing or upscaling."
+        >
+            <Download size={10} aria-hidden /> {busy ? "saving…" : "export png"}
+        </button>
+    );
+}
+
+function ReplaceFromPngButton({
+    row,
+    clientRoot,
+    onApplied
+}: {
+    row: RowState;
+    clientRoot: string;
+    onApplied: () => void;
+}) {
+    const [busy, setBusy] = useState(false);
+    const onClick = async () => {
+        setBusy(true);
+        try {
+            const picked = await openDialog({
+                title: `Replace ${row.ref.package}.${row.ref.name} (must match ${row.info?.width}×${row.info?.height})`,
+                multiple: false,
+                filters: [{ name: "PNG", extensions: ["png"] }]
+            });
+            if (!picked || typeof picked !== "string") return;
+            const result = await ipc.replaceTextureWithPng(
+                clientRoot,
+                row.ref.package,
+                row.ref.name,
+                picked
+            );
+            logger.info("texture-replace", `replaced ${row.ref.package}.${row.ref.name}`, {
+                bytesWritten: result.bytesWritten,
+                mips: result.mipsReplaced,
+                backup: result.backupPath ?? "(none)"
+            });
+            onApplied();
+        } catch (e) {
+            const msg = String(e);
+            logger.warn("texture-replace", "failed", { err: msg });
+            alert(`Replace failed: ${msg}`);
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={busy || !row.info}
+            className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)] hover:text-[var(--color-text)] disabled:opacity-40"
+            title="Replace the texture pixels from a PNG file. The PNG dimensions must match the texture's existing resolution (same-size replace only). A .bak of the .utx is created."
+        >
+            <Upload size={10} aria-hidden /> {busy ? "writing…" : "replace from png"}
+        </button>
+    );
+}
+
+function UpscaleButton({
+    row,
+    clientRoot,
+    onApplied
+}: {
+    row: RowState;
+    clientRoot: string;
+    onApplied: () => void;
+}) {
+    const [busy, setBusy] = useState(false);
+    const onClick = async () => {
+        if (!row.info) return;
+        const ok = window.confirm(
+            `Upscale-pass ${row.ref.package}.${row.ref.name}? This runs a 2× Lanczos3 → 1× Lanczos3 round-trip ` +
+                `to sharpen the existing pixels in place (same-size write, format ${row.info.format}). ` +
+                `A .bak of the .utx is created.`
+        );
+        if (!ok) return;
+        setBusy(true);
+        try {
+            const result = await ipc.upscaleTexture(clientRoot, row.ref.package, row.ref.name, 2);
+            logger.info("texture-upscale", `re-encoded ${row.ref.package}.${row.ref.name}`, {
+                bytesWritten: result.bytesWritten,
+                mips: result.mipsReplaced,
+                backup: result.backupPath ?? "(none)"
+            });
+            onApplied();
+        } catch (e) {
+            const msg = String(e);
+            logger.warn("texture-upscale", "failed", { err: msg });
+            alert(`Upscale failed: ${msg}`);
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={busy || !row.info}
+            className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-faint)] hover:border-[var(--color-accent-2)] hover:text-[var(--color-text)] disabled:opacity-40"
+            title="Run a 2× sharpening pass (Lanczos3 up then Lanczos3 down). Stays at original resolution. True higher-resolution upscale needs the offset-shifting path which is not yet implemented."
+        >
+            <ArrowUp size={10} aria-hidden /> {busy ? "running…" : "sharpen 2× pass"}
+        </button>
+    );
+}
+
+function base64DataUrlToBytes(url: string): Uint8Array {
+    const comma = url.indexOf(",");
+    const b64 = comma >= 0 ? url.slice(comma + 1) : url;
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
 }
 
 function KV({ k, v, title }: { k: string; v: string; title?: string }) {

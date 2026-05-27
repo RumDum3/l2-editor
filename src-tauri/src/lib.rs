@@ -26,7 +26,7 @@ use commands::skillgrp::{
 };
 use commands::textures::{
     clear_texture_cache, list_map_regions, list_textures, read_region_terrain_texture,
-    read_texture, texture_info,
+    read_texture, replace_texture_with_png, texture_info, upscale_texture,
 };
 use commands::chronicle::{chronicle_dats, infer_chronicle, list_chronicles};
 use commands::model::{
@@ -59,6 +59,8 @@ pub fn run() {
             list_xml_files,
             read_texture,
             texture_info,
+            replace_texture_with_png,
+            upscale_texture,
             list_textures,
             list_map_regions,
             read_region_terrain_texture,

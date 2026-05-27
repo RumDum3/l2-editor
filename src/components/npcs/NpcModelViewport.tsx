@@ -11,7 +11,7 @@ import {
     exportMeshAsGlb,
     exportMeshAsObj
 } from "../../lib/meshExport";
-import { listTextures, loadTexture } from "../../lib/textureCache";
+import { loadTexture } from "../../lib/textureCache";
 
 type RenderMode = "auto" | "mesh" | "points" | "wireframe";
 
@@ -67,72 +67,75 @@ export function NpcModelViewport({
         return { center: worldCenter, radius };
     }, [mesh.positions]);
 
-    const firstTex = resolvedTextures[0];
-    const [texture, setTexture] = useState<THREE.Texture | null>(null);
+    const [textures, setTextures] = useState<(THREE.Texture | null)[]>([]);
     const [texStatus, setTexStatus] = useState<string>("none");
+    const refsKey = resolvedTextures.map((r) => `${r.package}.${r.name}`).join("|");
     useEffect(() => {
         let cancelled = false;
-        setTexture(null);
-        if (!firstTex) {
-            setTexStatus(`no refs (${resolvedTextures.length})`);
+        setTextures([]);
+        if (resolvedTextures.length === 0) {
+            setTexStatus("no refs");
             return;
         }
         if (!clientRoot) {
             setTexStatus("no clientRoot");
             return;
         }
-        const file = `${firstTex.package}.${firstTex.name}`;
-        setTexStatus(`loading ${file}`);
-        loadTexture(file, clientRoot).then(async (entry) => {
+        setTexStatus(`loading ${resolvedTextures.length} texture(s)…`);
+        const result: (THREE.Texture | null)[] = new Array(resolvedTextures.length).fill(null);
+        let remaining = resolvedTextures.length;
+        const finalize = () => {
             if (cancelled) return;
-            if (!entry.url) {
-                setTexStatus(`${entry.status}: ${file}`);
-                try {
-                    const all = await listTextures(firstTex.package, clientRoot);
-                    console.log(
-                        `[texture] ${firstTex.package} has ${all.length} entries; first 30:`,
-                        all.slice(0, 30)
-                    );
-                    const needle = firstTex.name.toLowerCase();
-                    const matches = all.filter((n) => n.toLowerCase().includes(needle.split("_")[0]));
-                    if (matches.length > 0) {
-                        console.log(`[texture] possible matches for "${needle}":`, matches);
-                    }
-                } catch (e) {
-                    console.log(`[texture] listTextures failed: ${e}`);
-                }
-                return;
-            }
-            const loader = new THREE.TextureLoader();
-            console.log(`[mesh-tex] data url length: ${entry.url.length}, starting THREE decode`);
-            loader.load(
-                entry.url,
-                (t) => {
-                    if (cancelled) {
-                        t.dispose();
-                        return;
-                    }
-                    t.colorSpace = THREE.SRGBColorSpace;
-                    t.wrapS = THREE.RepeatWrapping;
-                    t.wrapT = THREE.RepeatWrapping;
-                    t.flipY = false;
-                    t.needsUpdate = true;
-                    setTexture(t);
-                    const status = `ok ${file} (${t.image?.width}x${t.image?.height})`;
-                    setTexStatus(status);
-                    console.log(`[mesh-tex] ${status}`);
-                },
-                undefined,
-                (err) => {
-                    console.error(`[mesh-tex] decode err`, err);
-                    setTexStatus(`decode err ${file}`);
-                }
+            const okCount = result.filter((t) => t !== null).length;
+            const first = resolvedTextures[0];
+            const firstFile = `${first.package}.${first.name}`;
+            const img0 = result[0]?.image as { width?: number; height?: number } | undefined;
+            const dims = img0?.width && img0?.height ? ` (${img0.width}x${img0.height})` : "";
+            setTexStatus(
+                okCount === resolvedTextures.length
+                    ? `ok ${okCount}/${resolvedTextures.length}: ${firstFile}${dims}`
+                    : `${okCount}/${resolvedTextures.length} loaded`
             );
+            setTextures(result);
+        };
+        resolvedTextures.forEach((ref, idx) => {
+            const file = `${ref.package}.${ref.name}`;
+            loadTexture(file, clientRoot).then((entry) => {
+                if (cancelled) return;
+                if (!entry.url) {
+                    remaining -= 1;
+                    if (remaining === 0) finalize();
+                    return;
+                }
+                const loader = new THREE.TextureLoader();
+                loader.load(
+                    entry.url,
+                    (t) => {
+                        if (cancelled) {
+                            t.dispose();
+                            return;
+                        }
+                        t.colorSpace = THREE.SRGBColorSpace;
+                        t.wrapS = THREE.RepeatWrapping;
+                        t.wrapT = THREE.RepeatWrapping;
+                        t.flipY = false;
+                        t.needsUpdate = true;
+                        result[idx] = t;
+                        remaining -= 1;
+                        if (remaining === 0) finalize();
+                    },
+                    undefined,
+                    () => {
+                        remaining -= 1;
+                        if (remaining === 0) finalize();
+                    }
+                );
+            });
         });
         return () => {
             cancelled = true;
         };
-    }, [firstTex?.package, firstTex?.name, clientRoot, resolvedTextures.length]);
+    }, [refsKey, clientRoot]);
 
     const [exportBusy, setExportBusy] = useState<"glb" | "obj" | null>(null);
     const safeName = (mesh.exportName || "mesh").replace(/[^A-Za-z0-9_.-]+/g, "_");
@@ -150,7 +153,7 @@ export function NpcModelViewport({
         setExportBusy(format);
         try {
             if (format === "glb") {
-                const buf = await exportMeshAsGlb(mesh, texture);
+                const buf = await exportMeshAsGlb(mesh, textures[0] ?? null);
                 await ipc.writeBinaryFile(target as string, bytesFromArrayBuffer(buf));
                 logger.info("mesh-export", `wrote glb`, { path: target, bytes: buf.byteLength });
             } else {
@@ -261,8 +264,9 @@ export function NpcModelViewport({
                         positions={mesh.positions}
                         indices={mesh.triangleWedges}
                         uvs={mesh.wedgeUvs}
+                        sections={mesh.sections}
                         wireframe={effectiveMode === "wireframe"}
-                        texture={textureEnabled ? texture : null}
+                        textures={textureEnabled ? textures : []}
                     />
                 )}
                 <BoundsBox min={mesh.bounds.min} max={mesh.bounds.max} />
@@ -272,37 +276,30 @@ export function NpcModelViewport({
     );
 }
 
+type SectionInfo = MeshData["sections"][number];
+
 function SolidMesh({
     positions,
     indices,
     uvs,
+    sections,
     wireframe,
-    texture
+    textures
 }: {
     positions: number[];
     indices: number[];
     uvs: number[];
+    sections: SectionInfo[];
     wireframe: boolean;
-    texture: THREE.Texture | null;
+    textures: (THREE.Texture | null)[];
 }) {
     const geometry = useMemo(() => {
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
         const expectedUvs = (positions.length / 3) * 2;
-        const hasUvs = uvs.length > 0 && uvs.length === expectedUvs;
-        if (hasUvs) {
+        if (uvs.length > 0 && uvs.length === expectedUvs) {
             g.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
         }
-        let uvMin = Infinity, uvMax = -Infinity, uvAllZero = true;
-        for (let i = 0; i < Math.min(uvs.length, 200); i++) {
-            const v = uvs[i];
-            if (v < uvMin) uvMin = v;
-            if (v > uvMax) uvMax = v;
-            if (v !== 0) uvAllZero = false;
-        }
-        console.log(
-            `[mesh-geom] verts=${positions.length / 3}, uvs=${uvs.length}/${expectedUvs}, hasUvs=${hasUvs}, uv range=[${uvMin.toFixed(3)}, ${uvMax.toFixed(3)}], allZero=${uvAllZero}`
-        );
         const indexBuf =
             indices.length > 0 && Math.max(...indices) < 65535
                 ? new Uint16Array(indices)
@@ -312,19 +309,104 @@ function SolidMesh({
         g.computeBoundingSphere();
         return g;
     }, [positions, indices, uvs]);
-    const useTex = !wireframe && texture !== null;
+
+    const usableSections = useMemo(() => {
+        if (!sections || sections.length === 0) return [] as SectionInfo[];
+        return sections.filter((s) => s.indexCount > 0 && s.firstIndex + s.indexCount <= indices.length);
+    }, [sections, indices.length]);
+
+    useMemo(() => {
+        console.log(
+            `[mesh-render] sections raw=${sections?.length ?? 0}, usable=${usableSections.length}, indices=${indices.length}, textures=${textures.length}, wireframe=${wireframe}`
+        );
+        if (sections && sections.length > 0) {
+            for (const s of sections) {
+                console.log(
+                    `  [${s.kind}] first=${s.firstIndex} count=${s.indexCount} mat=${s.materialIndex} → tex[${s.textureIndex}]`
+                );
+            }
+        }
+    }, [sections, usableSections.length, indices.length, textures.length, wireframe]);
+
+    const useMulti = !wireframe && textures.length > 0 && usableSections.length > 0;
+    const useSingle = !wireframe && textures.length > 0 && !useMulti;
+
+    if (useMulti) {
+        return (
+            <group>
+                {usableSections.map((s, i) => (
+                    <SectionMesh
+                        key={`s${i}:${s.firstIndex}:${s.indexCount}`}
+                        geometry={geometry}
+                        section={s}
+                        texture={textures[s.textureIndex] ?? textures[0] ?? null}
+                    />
+                ))}
+            </group>
+        );
+    }
+
+    if (useSingle) {
+        const tex = textures.find((t) => t !== null) ?? null;
+        return (
+            <mesh geometry={geometry} key={`single-${tex?.uuid ?? "none"}`}>
+                {tex ? (
+                    <meshBasicMaterial
+                        map={tex}
+                        side={THREE.DoubleSide}
+                        transparent
+                        alphaTest={0.5}
+                    />
+                ) : (
+                    <meshStandardMaterial
+                        color="#cbd5e1"
+                        flatShading
+                        side={THREE.DoubleSide}
+                        metalness={0.05}
+                        roughness={0.65}
+                    />
+                )}
+            </mesh>
+        );
+    }
+
     return (
-        <mesh geometry={geometry} key={useTex ? `tex-${texture?.uuid}` : "no-tex"}>
-            {useTex ? (
-                <meshBasicMaterial
-                    map={texture}
-                    side={THREE.DoubleSide}
-                />
+        <mesh geometry={geometry} key={wireframe ? "wf" : "plain"}>
+            <meshStandardMaterial
+                color={wireframe ? "#7dd3fc" : "#cbd5e1"}
+                wireframe={wireframe}
+                flatShading={!wireframe}
+                side={THREE.DoubleSide}
+                metalness={0.05}
+                roughness={0.65}
+            />
+        </mesh>
+    );
+}
+
+function SectionMesh({
+    geometry,
+    section,
+    texture
+}: {
+    geometry: THREE.BufferGeometry;
+    section: SectionInfo;
+    texture: THREE.Texture | null;
+}) {
+    const sliced = useMemo(() => {
+        const g = geometry.clone();
+        g.clearGroups();
+        g.setDrawRange(section.firstIndex, section.indexCount);
+        return g;
+    }, [geometry, section.firstIndex, section.indexCount]);
+    return (
+        <mesh geometry={sliced} key={`tex-${texture?.uuid ?? "none"}`}>
+            {texture ? (
+                <meshBasicMaterial map={texture} side={THREE.DoubleSide} />
             ) : (
                 <meshStandardMaterial
-                    color={wireframe ? "#7dd3fc" : "#cbd5e1"}
-                    wireframe={wireframe}
-                    flatShading={!wireframe}
+                    color="#cbd5e1"
+                    flatShading
                     side={THREE.DoubleSide}
                     metalness={0.05}
                     roughness={0.65}

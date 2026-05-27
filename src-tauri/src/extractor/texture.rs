@@ -129,6 +129,65 @@ pub fn read_texture_info(pkg: &Package, export: &ExportEntry) -> Result<TextureI
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct MipLayout {
+    pub data_offset: usize,
+    pub data_len: usize,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextureLayout {
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+    pub mip_count: i32,
+    pub mips: Vec<MipLayout>,
+}
+
+pub fn scan_texture_layout(pkg: &Package, export: &ExportEntry) -> Result<TextureLayout, TextureError> {
+    let bytes: &[u8] = &pkg.bytes;
+    let mut c = Cursor::new(bytes);
+    c.set_position(export.serial_offset as u64);
+    let props = properties::read(pkg, &mut c)?;
+    let format = props.format.unwrap_or(TextureFormat::P8);
+    skip_unk(&mut c, pkg.header.file_version, pkg.header.licensee_version)?;
+    let mip_count = read_compact_int(&mut c)?;
+    if mip_count <= 0 {
+        return Err(TextureError::NoMips);
+    }
+    let mut mips: Vec<MipLayout> = Vec::with_capacity(mip_count as usize);
+    let mut top_w = 0u32;
+    let mut top_h = 0u32;
+    for i in 0..mip_count {
+        let _next_offset = c.read_u32::<LittleEndian>()?;
+        let size = read_compact_int(&mut c)?;
+        if size < 0 {
+            return Err(TextureError::DecodeFailed("negative mip size"));
+        }
+        let data_offset = c.position() as usize;
+        let data_len = size as usize;
+        c.set_position(c.position() + data_len as u64);
+        let width = c.read_u32::<LittleEndian>()?;
+        let height = c.read_u32::<LittleEndian>()?;
+        let _ubits = read_u8_at(&mut c)?;
+        let _vbits = read_u8_at(&mut c)?;
+        if i == 0 {
+            top_w = if width > 0 { width } else { props.width };
+            top_h = if height > 0 { height } else { props.height };
+        }
+        mips.push(MipLayout { data_offset, data_len, width, height });
+    }
+    Ok(TextureLayout {
+        format,
+        width: top_w,
+        height: top_h,
+        mip_count,
+        mips,
+    })
+}
+
 pub fn rgba_to_png(width: u32, height: u32, rgba: Vec<u8>) -> Result<Vec<u8>, TextureError> {
     let img: ImageBuffer<Rgba<u8>, _> =
         ImageBuffer::from_vec(width, height, rgba).ok_or(TextureError::PngEncode)?;

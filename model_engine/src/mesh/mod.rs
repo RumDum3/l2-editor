@@ -6,7 +6,7 @@ mod textures;
 
 pub use data::{
     BoneInfluence, Bounds, DecoderConfidence, MeshBone, MeshData, MeshDebugInfo, MeshDecodeError,
-    MeshMaterial, MeshTextureRef,
+    MeshMaterial, MeshSection, MeshTextureRef,
 };
 pub use decoder::decode_skeletal_mesh;
 pub use hex_dump::{dump_after_properties, HexDump};

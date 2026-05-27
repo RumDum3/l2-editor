@@ -20,7 +20,18 @@ pub struct MeshData {
     pub decoder_confidence: DecoderConfidence,
     pub l2_walker_error: Option<String>,
     pub textures: Vec<MeshTextureRef>,
+    pub sections: Vec<MeshSection>,
     pub debug_info: MeshDebugInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshSection {
+    pub kind: &'static str,
+    pub first_index: u32,
+    pub index_count: u32,
+    pub material_index: u32,
+    pub texture_index: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]

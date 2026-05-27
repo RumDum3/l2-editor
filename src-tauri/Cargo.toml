@@ -30,6 +30,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 byteorder = "1"
 texture2ddecoder = "0.1"
+texpresso = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 rayon = "1"
